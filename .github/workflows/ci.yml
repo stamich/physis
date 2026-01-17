@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Nightly run of the slow validation suite.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "22"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Format check, compile and unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew spotlessCheck build --continue --stacktrace 2>&1 | tee build.log
+      - name: Report build errors as annotations
+        if: failure()
+        shell: bash
+        run: python3 .github/scripts/annotate_build_log.py build.log
+
+  slow-tests:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "22"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Slow validation tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew slowTest --continue --stacktrace 2>&1 | tee build.log
+      - name: Report test errors as annotations
+        if: failure()
+        shell: bash
+        run: python3 .github/scripts/annotate_build_log.py build.log
