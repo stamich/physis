@@ -1,5 +1,7 @@
 # Physis
 
+[![CI](https://github.com/stamich/physis/actions/workflows/ci.yml/badge.svg)](https://github.com/stamich/physis/actions/workflows/ci.yml)
+
 Physis is a Scala 3 framework for simulating and visualising models of natural
 phenomena: ODE systems, numerical fields and agent-based models, with an emphasis
 on verified numerics and reproducible runs.
