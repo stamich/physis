@@ -13,6 +13,10 @@ import physis.core.random.SplittableRng
  *
  * Sampling lands exactly on sample times: when the next step would overshoot, the run shortens
  * it. Results are therefore independent of how step sizes relate to the sampling interval.
+ *
+ * With [[Stepping.Adaptive]] the run passes the tolerances to the model through the
+ * [[StepContext]] and follows the model's suggested next step, capped at `maxDt`. Steps
+ * shortened only to land on a sample time do not reset that proposal.
  */
 final class Run[P, S] private[run] (
     val model: Model.Aux[P, S],
@@ -32,9 +36,20 @@ final class Run[P, S] private[run] (
   private var t = 0.0
   private var n = 0L
   private var rejectedTotal = 0L
-  private val stepSize: Double = stepping match
+  private val adaptive: Option[Stepping.Adaptive] = stepping match
+    case a: Stepping.Adaptive => Some(a)
+    case _: Stepping.Fixed => None
+
+  /** Step size proposed for the next step. */
+  private var nextDt: Double = stepping match
     case Stepping.Fixed(dt) => dt
-    case other => throw new IllegalArgumentException(s"unsupported stepping: $other")
+    case a: Stepping.Adaptive => a.initialDt
+
+  adaptive.foreach { a =>
+    ctx.adaptive = true
+    ctx.rtol = a.rtol
+    ctx.atol = a.atol
+  }
 
   /** Current simulation time. */
   def time: Double = t
@@ -50,12 +65,19 @@ final class Run[P, S] private[run] (
     require(!(target < t), s"cannot advance backwards from $t to $target")
     while t < target do
       val remaining = target - t
-      if remaining <= Run.LandingTolerance * math.max(math.abs(target), stepSize) then t = target
+      if remaining <= Run.LandingTolerance * math.max(math.abs(target), nextDt) then t = target
       else
-        val shortened = remaining < stepSize
-        val dt = if shortened then remaining else stepSize
+        val shortened = remaining < nextDt
+        val dt = if shortened then remaining else nextDt
         stepOnce(dt)
         t = if shortened && ctx.taken == dt then target else t + ctx.taken
+        adaptive match
+          case Some(a) =>
+            // A step shortened only to land on a sample time keeps the previous proposal;
+            // otherwise follow the model's suggestion, capped at maxDt.
+            if (!shortened || ctx.rejected > 0) && ctx.suggestedNext > 0.0 then
+              nextDt = math.min(ctx.suggestedNext, a.maxDt)
+          case None => ()
 
   /** Runs to `until`, sampling every probe at the start and every `sampleEvery`. */
   def runUntil(until: Double): RunResult =
@@ -167,6 +189,13 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
 
   def build(): Run[P, S] =
     cfg.stepping.validate.foreach(error => throw new IllegalArgumentException(error))
+    if !cfg.model.supports(cfg.stepping) then
+      val kind = cfg.stepping match
+        case _: Stepping.Fixed => "fixed"
+        case _: Stepping.Adaptive => "adaptive"
+      throw new IllegalArgumentException(
+        s"model '${cfg.model.id}' does not support $kind stepping"
+      )
     require(cfg.sampleEvery > 0.0 && !cfg.sampleEvery.isInfinite, "sampleEvery must be positive")
     val names = cfg.probes.map(_.name)
     require(names.distinct.size == names.size, s"duplicate probe names: ${names.mkString(", ")}")
