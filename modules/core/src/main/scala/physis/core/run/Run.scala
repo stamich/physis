@@ -116,6 +116,9 @@ final class Run[P, S] private[run] (
   /** Fingerprint of the current state. */
   def digest: Long = model.digest(state)
 
+  /** Manifest that reproduces this run up to `until`. */
+  def manifest(until: Double): Manifest = Manifest.of(this, until)
+
   private def stepOnce(dt: Double): Unit =
     ctx.step = n
     ctx.time = t
