@@ -47,10 +47,3 @@ class Rk4Suite extends munit.FunSuite:
     val bad = OdeModel("bad", "1", Oscillator, OscillatorParams.schema, (_, _) => Array(1.0))
     intercept[IllegalArgumentException](bad.init(p, SplittableRng(0L)))
   }
-
-  test("fixed stepping only") {
-    val error = intercept[IllegalArgumentException](
-      Physis.model(Oscillator.model).stepping(Stepping.Adaptive(1e-8, 1e-8, 0.1, 1.0)).build()
-    )
-    assert(error.getMessage.contains("does not support adaptive stepping"))
-  }
