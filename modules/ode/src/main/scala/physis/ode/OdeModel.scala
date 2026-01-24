@@ -8,7 +8,9 @@ import physis.core.random.SplittableRng
 object OdeModel:
 
   /**
-   * An ODE model integrated with RK4 under [[Stepping.Fixed]].
+   * An ODE model integrated with RK4 under [[Stepping.Fixed]] and with Dormand-Prince 5(4)
+   * under [[Stepping.Adaptive]]. The integrator follows from the run's stepping policy, so a
+   * manifest's stepping fully determines how it is replayed.
    *
    * @param initial initial state vector for given parameters; may use the seeded `rng`
    */
@@ -31,10 +33,9 @@ private final class OdeSystemModel[P](
   type State = OdeState
 
   private val rk4 = Rk4(system)
+  private val dopri = new DormandPrince54(system)
 
-  override def supports(stepping: Stepping): Boolean = stepping match
-    case _: Stepping.Fixed => true
-    case _: Stepping.Adaptive => false
+  override def supports(stepping: Stepping): Boolean = true
 
   def init(p: P, rng: SplittableRng): OdeState =
     val y0 = initial(p, rng)
@@ -45,8 +46,13 @@ private final class OdeSystemModel[P](
     new OdeState(y0.clone())
 
   def advance(state: OdeState, p: P, dt: Double, ctx: StepContext): Unit =
-    rk4.step(ctx.time, state.y, p, dt)
-    ctx.taken = dt
-    ctx.suggestedNext = dt
+    if ctx.adaptive then
+      ctx.taken = dopri.step(ctx.time, state.y, p, dt, ctx.rtol, ctx.atol)
+      ctx.suggestedNext = dopri.lastSuggested
+      ctx.rejected += dopri.lastRejected
+    else
+      rk4.step(ctx.time, state.y, p, dt)
+      ctx.taken = dt
+      ctx.suggestedNext = dt
 
   def digest(state: OdeState): Long = Digest.ofDoubles(state.y)
