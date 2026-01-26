@@ -9,3 +9,7 @@ dependencies {
     implementation(project(":models:lorenz"))
     implementation(project(":models:pendulum"))
 }
+
+application {
+    mainClass.set("physis.examples.RunHeadless")
+}
