@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
   schedule:
     # Nightly run of the slow validation suite.
@@ -27,7 +27,17 @@ jobs:
           distribution: temurin
           java-version: "22"
       - uses: gradle/actions/setup-gradle@v5
-      - name: Format check, compile and unit tests
+      - name: Install a virtual display (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+      - name: Format check, compile and unit tests (Linux, with FX smoke tests)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          xvfb-run -a ./gradlew spotlessCheck build -PfxSmoke=true --continue --stacktrace 2>&1 | tee build.log
+      - name: Format check, compile and unit tests (macOS)
+        if: runner.os != 'Linux'
         shell: bash
         run: |
           set -o pipefail
@@ -38,7 +48,6 @@ jobs:
         run: python3 .github/scripts/annotate_build_log.py build.log
 
   slow-tests:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

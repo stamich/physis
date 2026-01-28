@@ -32,4 +32,6 @@ A new model is accepted with:
 4. a documentation page in `docs/models/` with equations, integration notes, thresholds and
    references.
 
-Long validation runs go to the `slowTest` source set (`src/slowTest/scala`) and run nightly.
+Long validation runs go to the `slowTest` source set (`src/slowTest/scala`); CI runs them on every pull request and nightly.
+
+Tests that need a display (JavaFX) check the `physis.fx.smoke` system property and are skipped unless it is `true`. CI sets it on Linux under a virtual display (`xvfb-run ./gradlew build -PfxSmoke=true`); run the same locally to include them.

@@ -52,7 +52,7 @@ testing {
         }
 
         // Long-running validation (Lyapunov exponents, long integrations).
-        // Run with `./gradlew slowTest`; CI runs it nightly.
+        // Run with `./gradlew slowTest`; CI runs it on every pull request and nightly.
         register<JvmTestSuite>("slowTest") {
             useJUnit()
             dependencies {
