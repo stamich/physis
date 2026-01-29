@@ -44,7 +44,7 @@ object Manifest:
       physis = BuildInfo.version,
       model = run.model.id,
       modelVersion = run.model.version,
-      params = run.model.params.toMap(run.params),
+      params = run.model.params.toMap(run.initialParams),
       stepping = run.stepping,
       seed = run.seed,
       until = until,
