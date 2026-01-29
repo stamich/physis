@@ -1,0 +1,17 @@
+{
+  "physis": "0.1.0",
+  "model": "decay",
+  "modelVersion": "1",
+  "params": {
+    "k": 0.7,
+    "y0": 2.0
+  },
+  "stepping": {
+    "kind": "fixed",
+    "dt": 0.01
+  },
+  "seed": 11,
+  "until": 3.0,
+  "sampleEvery": 0.1,
+  "git": "65143a036089"
+}
