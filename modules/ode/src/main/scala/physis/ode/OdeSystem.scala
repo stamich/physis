@@ -1,6 +1,7 @@
 package physis.ode
 
 import physis.core.Probe
+import physis.core.live.StateExport
 
 /**
  * A first-order ODE system dy/dt = f(t, y; p).
@@ -29,3 +30,9 @@ object OdeState:
   /** Probe reading component `index` of the state vector. */
   def component(name: String, index: Int, unit: String = "1"): Probe[OdeState] =
     Probe[OdeState](name, unit)((s, _) => s.y(index))
+
+  /** Exports the state vector as is, for live runs. */
+  given stateExport: StateExport[OdeState] with
+    def size(state: OdeState): Int = state.y.length
+    def copyInto(state: OdeState, out: Array[Double]): Unit =
+      System.arraycopy(state.y, 0, out, 0, state.y.length)
