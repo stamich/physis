@@ -1,9 +1,9 @@
 package physis.core.live
 
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeUnit}
 import java.util.concurrent.locks.LockSupport
 
-import physis.core.run.{Run, RunBuilder}
+import physis.core.run.{Manifest, Run, RunBuilder}
 
 /** Instructions from the UI to a [[LiveRun]], applied by the simulation thread between steps. */
 enum Command:
@@ -43,6 +43,7 @@ final class LiveRun[P, S](
     frameBudgetNanos: Long = 8_000_000L
 ):
   private val commands = new ConcurrentLinkedQueue[Command]()
+  private val manifestRequests = new ConcurrentLinkedQueue[CompletableFuture[Manifest]]()
   @volatile private var running = false
   @volatile private var thread: Thread = null
 
@@ -84,9 +85,37 @@ final class LiveRun[P, S](
     if t != null then
       LockSupport.unpark(t)
       t.join(1000)
+    answerManifestRequests()
+
+  /**
+   * Manifest of the session so far: initial parameters, every parameter change as a step-indexed
+   * event, the exact number of steps taken and the final digest. Replaying it takes the same
+   * steps and reproduces the digest bit for bit.
+   *
+   * Taken by the simulation thread between two steps; callable from any thread.
+   */
+  def manifest(): Manifest =
+    val t = thread
+    if t == null || !t.isAlive then synchronized(manifestOf(run))
+    else
+      val request = new CompletableFuture[Manifest]()
+      manifestRequests.add(request)
+      LockSupport.unpark(t)
+      // The thread may have ended between the check and the request.
+      if !t.isAlive then answerManifestRequests()
+      request.get(5, TimeUnit.SECONDS)
 
   /** Whether the simulation thread is still running. */
   def isAlive: Boolean = thread != null && thread.isAlive
+
+  private def manifestOf(r: Run[P, S]): Manifest =
+    r.manifest(until = r.time).copy(steps = Some(r.stepCount), digest = Some(r.digest))
+
+  private def answerManifestRequests(): Unit =
+    var request = manifestRequests.poll()
+    while request != null do
+      val _ = request.complete(manifestOf(run))
+      request = manifestRequests.poll()
 
   private def loop(): Unit =
     var last = System.nanoTime()
@@ -96,6 +125,7 @@ final class LiveRun[P, S](
     simTarget = run.time
     while running do
       var dirty = drainCommands()
+      answerManifestRequests()
       val now = System.nanoTime()
       val elapsed = now - last
       last = now
