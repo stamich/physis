@@ -7,3 +7,7 @@ description = "Physis views: toolkit-free descriptions of what to draw (no JavaF
 dependencies {
     api(project(":core"))
 }
+
+dependencies {
+    testImplementation(project(":verify"))
+}
