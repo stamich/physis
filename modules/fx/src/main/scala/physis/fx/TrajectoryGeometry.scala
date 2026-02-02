@@ -40,6 +40,9 @@ final class FlatProjector extends Projector:
   def viewX(x: Double, y: Double, z: Double): Double = ox + sx * x
   def viewY(x: Double, y: Double, z: Double): Double = oy - sy * y
 
+  /** Pixels per model unit along x. */
+  def scaleX: Double = sx
+
 /**
  * Frame preparation for trail drawing, kept free of JavaFX so it can be tested and timed
  * headless.

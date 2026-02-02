@@ -129,27 +129,8 @@ final class TrajectoryRenderer(view: View.Trajectory) extends Renderer:
     if trail.size > 0 then updateBounds()
 
   private def draw(gc: javafx.scene.canvas.GraphicsContext): Unit =
-    gc.setLineWidth(1.2)
-    val xs = geometry.xs
-    val ys = geometry.ys
-    var b = 0
-    while b < geometry.bands do
-      val start = geometry.bandStart(b)
-      val end = geometry.bandStart(b + 1)
-      if end > start then
-        gc.setStroke(colors(b))
-        gc.beginPath()
-        var previous = -2
-        var k = start
-        while k < end do
-          val i = geometry.order(k)
-          if i - 1 != previous then gc.moveTo(xs(i - 1), ys(i - 1))
-          gc.lineTo(xs(i), ys(i))
-          previous = i
-          k += 1
-        gc.stroke()
-      b += 1
+    BandPainter.stroke(gc, geometry, colors, 1.2)
     // head of the trail
     val last = geometry.size - 1
     gc.setFill(colors(geometry.bands - 1))
-    gc.fillOval(xs(last) - 3, ys(last) - 3, 6, 6)
+    gc.fillOval(geometry.xs(last) - 3, geometry.ys(last) - 3, 6, 6)
