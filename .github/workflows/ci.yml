@@ -46,6 +46,13 @@ jobs:
         if: failure()
         shell: bash
         run: python3 .github/scripts/annotate_build_log.py build.log
+      - name: Keep Lab screenshots (Linux)
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-screenshots
+          path: apps/lab/build/screenshots/
+          if-no-files-found: ignore
 
   slow-tests:
     runs-on: ubuntu-latest

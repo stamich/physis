@@ -55,3 +55,22 @@ pivot at the origin, y up).
 The thresholds were checked against an independent double-precision simulation: energy drift
 ≈ 3e-14 (near-linear) and ≈ 1e-7 (chaotic); separation growth ≈ 4 × (near-linear) and
 ≈ 4 × 10^8 (chaotic).
+
+## Views
+
+`PendulumViews` (in `models/pendulum`, depending only on `physis-view`) describes how Physis Lab
+draws the system:
+
+- `mechanism(p)` — a 2D scene with the pivot, both rods and both bobs (areas proportional to
+  mass), framed for the initial lengths, with a 2 000-point fading trail of the outer bob. The
+  drawing reads lengths and masses from the current parameters, so it follows live changes;
+- `energyDrift` — the relative energy drift probe over the last 30 simulated seconds;
+- `default(p)` — the two side by side.
+
+The bob positions are (l1 sin θ1, −l1 cos θ1) and that plus (l2 sin θ2, −l2 cos θ2); at θ = 0
+both hang straight down. Note that the drift is measured against the energy at the start of the
+run: after a live change of masses, lengths or g it shows the change in energy, not an
+integration error.
+
+The Lab runs the model with fixed RK4 steps of 0.0005 at one simulated second per second.
+
