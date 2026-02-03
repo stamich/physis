@@ -1,8 +1,13 @@
 package physis.lab
 
+import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+
+import javafx.application.Platform
 import javafx.geometry.{Insets, Pos}
 import javafx.scene.{Node, Scene}
-import javafx.scene.control.{ComboBox, Label, ScrollPane, TextInputControl}
+import javafx.scene.control.{ComboBox, Label, Menu, MenuBar, MenuItem, ScrollPane, TextInputControl}
+import javafx.stage.FileChooser
 import javafx.scene.input.{KeyCode, KeyEvent}
 import javafx.scene.layout.{
   BorderPane,
@@ -36,7 +41,11 @@ import physis.view.{Direction, View}
  * Switching models stops the current live run and render loop and starts new ones; nothing is
  * shared between sessions except the window. All methods run on the FX application thread.
  */
-final class LabWindow(models: Vector[LabModel], seed: Long = 1L):
+final class LabWindow(
+    models: Vector[LabModel],
+    registry: physis.core.run.ModelRegistry = Catalog.registry,
+    seed: Long = 1L
+):
   require(models.nonEmpty, "the Lab needs at least one model")
 
   val root: BorderPane = new BorderPane()
@@ -63,6 +72,61 @@ final class LabWindow(models: Vector[LabModel], seed: Long = 1L):
   bottom.setAlignment(Pos.CENTER_LEFT)
   root.setLeft(side)
   root.setBottom(bottom)
+  root.setTop(menu())
+
+  private def menu(): MenuBar =
+    val save = new MenuItem("Save manifest…")
+    save.setOnAction(_ => chooseAndSave())
+    val replay = new MenuItem("Replay manifest…")
+    replay.setOnAction(_ => chooseAndReplay())
+    val quit = new MenuItem("Close")
+    quit.setOnAction(_ => Option(root.getScene).map(_.getWindow).foreach(_.hide()))
+    new MenuBar(new Menu("File", null, save, replay, quit))
+
+  private def chooser(): FileChooser =
+    val c = new FileChooser()
+    c.getExtensionFilters.add(new FileChooser.ExtensionFilter("Physis manifest", "*.json"))
+    c
+
+  private def chooseAndSave(): Unit =
+    for r <- running do
+      val c = chooser()
+      c.setInitialFileName(s"${r.session.model.id}-session.json")
+      Option(c.showSaveDialog(root.getScene.getWindow)).foreach(f => saveManifest(f.toPath))
+
+  private def chooseAndReplay(): Unit =
+    Option(chooser().showOpenDialog(root.getScene.getWindow)).foreach(f => replayManifest(f.toPath))
+
+  /** Saves the current session's manifest to `path` and reports it in the status line. */
+  def saveManifest(path: Path): Either[String, physis.core.run.Manifest] =
+    running match
+      case None => Left("no session is running")
+      case Some(r) =>
+        val result = LabManifests.save(r.session.live, path)
+        val text = result match
+          case Right(m) =>
+            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, ${m.events.size} parameter changes"
+          case Left(error) => error
+        status.setText(text)
+        result
+
+  /**
+   * Replays the manifest at `path` on a background thread; the outcome appears in the status line
+   * and completes the returned future (on the FX thread).
+   */
+  def replayManifest(path: Path): CompletableFuture[Either[String, ReplayReport]] =
+    val done = new CompletableFuture[Either[String, ReplayReport]]()
+    status.setText(s"Replaying ${path.getFileName}…")
+    def report(result: Either[String, ReplayReport]): Unit =
+      status.setText(result.fold(e => s"Replay failed: $e", _.summary))
+      if !done.complete(result) then ()
+    def work(): Unit =
+      val result = LabManifests.replay(path, registry)
+      Platform.runLater(() => report(result))
+    val worker = new Thread(() => work(), "physis-replay")
+    worker.setDaemon(true)
+    worker.start()
+    done
 
   private var running: Option[LabWindow.Running] = None
 
