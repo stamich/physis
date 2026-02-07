@@ -76,14 +76,18 @@ final class Run[P, S] private[run] (
   def events: Vector[ParamEvent] = recorded
 
   /**
-   * Changes parameters from the next step on. Values are validated through the model's schema;
-   * on error nothing changes. Several calls before the next step are merged into one event.
+   * Changes parameters from the next step on. Values are validated through the model's schema
+   * and its [[physis.core.Model.check]]; on error nothing changes. Several calls before the next step are merged into one event.
    */
   def setParams(values: Map[String, Double]): Either[String, Unit] =
     val merged = pending ++ values
-    model.params.withOverrides(current, merged).map { _ =>
-      pending = VectorMap.from(model.params.names.filter(merged.contains).map(n => n -> merged(n)))
-    }
+    model.params
+      .withOverrides(current, merged)
+      .flatMap(p => model.check(p, stepping))
+      .map { _ =>
+        pending =
+          VectorMap.from(model.params.names.filter(merged.contains).map(n => n -> merged(n)))
+      }
 
   /**
    * Takes exactly one whole step of the proposed size, without landing on any target time.
@@ -285,8 +289,13 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
     val names = cfg.probes.map(_.name)
     require(names.distinct.size == names.size, s"duplicate probe names: ${names.mkString(", ")}")
     require(cfg.events.forall(_.step >= 0), "parameter events must have non-negative steps")
+    cfg.model.check(cfg.params, cfg.stepping).left.foreach { error =>
+      throw new IllegalArgumentException(s"parameters rejected by '${cfg.model.id}': $error")
+    }
     cfg.events.foldLeft(cfg.params) { (p, e) =>
-      cfg.model.params.withOverrides(p, e.values) match
+      cfg.model.params
+        .withOverrides(p, e.values)
+        .flatMap(next => cfg.model.check(next, cfg.stepping).map(_ => next)) match
         case Right(next) => next
         case Left(error) =>
           throw new IllegalArgumentException(s"invalid parameter event at step ${e.step}: $error")

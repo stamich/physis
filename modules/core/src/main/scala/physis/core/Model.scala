@@ -35,6 +35,14 @@ trait Model[P]:
     case _: Stepping.Fixed => true
     case _: Stepping.Adaptive => false
 
+  /**
+   * Whether `p` is acceptable for a run with this stepping policy, beyond the ranges of the
+   * schema. Explicit schemes use it to refuse parameters that would make them unstable, so that
+   * a slider cannot blow a run up. Called when a run is built (initial parameters and every
+   * scheduled change) and for every live change; a rejection names the limit that was hit.
+   */
+  def check(p: P, stepping: Stepping): Either[String, Unit] = Right(())
+
   /** Creates the initial state. */
   def init(p: P, rng: SplittableRng): State
 
@@ -143,6 +151,23 @@ object Digest:
     h
 
   def ofDoubles(values: Double*): Long = ofDoubles(values.toArray)
+
+  /** Fingerprint of `values(from until until)`, folded without copying or boxing. */
+  def ofRange(values: Array[Double], from: Int, until: Int): Long =
+    require(from >= 0 && from <= until && until <= values.length, s"bad range [$from, $until)")
+    fold(Offset, values, from, until)
+
+  /** Continues a fingerprint `h` with `values(from until until)`; chains several arrays. */
+  def fold(h0: Long, values: Array[Double], from: Int, until: Int): Long =
+    var h = h0
+    var i = from
+    while i < until do
+      h = mixLong(h, java.lang.Double.doubleToRawLongBits(values(i)))
+      i += 1
+    h
+
+  /** Starting value of a chained fingerprint, see [[fold]]. */
+  def start: Long = Offset
 
   private def mixLong(h0: Long, v: Long): Long =
     var h = h0
