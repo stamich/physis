@@ -58,6 +58,7 @@ final class LiveRun[P, S](
   private var base: RunBuilder[P, S] = builder
   private var run: Run[P, S] = builder.build()
   private val paramNames = run.model.params.names
+  private var layout: IndexedSeq[Slice] = exporter.layout(run.state)
   // Replaced by the simulation thread when a restart changes the size of the exported state.
   @volatile private var buffer: TripleBuffer[Snapshot] = newBuffer()
   private var paused = startPaused
@@ -194,6 +195,7 @@ final class LiveRun[P, S](
     simTarget = 0.0
     paramEventsSeen = 0
     paramValues = run.model.params.toValues(run.params)
+    layout = exporter.layout(run.state)
     error = ""
     if buffer.back.stateSize != exporter.size(run.state) then buffer = newBuffer()
 
@@ -213,6 +215,7 @@ final class LiveRun[P, S](
       paramValues = run.model.params.toValues(run.params)
     val out = buffer
     val s = out.back
+    s.slices = layout
     s.time = run.time
     s.step = run.stepCount
     s.rejected = run.rejectedCount

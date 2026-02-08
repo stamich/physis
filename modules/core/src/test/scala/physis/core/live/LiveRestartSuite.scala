@@ -1,37 +1,8 @@
 package physis.core.live
 
-import physis.core.{Digest, Model, StepContext, Stepping}
-import physis.core.param.{ParamSchema, ParamSpec}
-import physis.core.random.SplittableRng
+import physis.core.Stepping
 import physis.core.run.{Manifest, ModelRegistry, Physis}
-
-/** Test model whose state size is a restart-only parameter. */
-private final case class ChainParams(n: Int, rate: Double)
-
-private object ChainParams:
-  given schema: ParamSchema[ChainParams] = ParamSchema.derived[ChainParams](
-    ParamSpec("n", default = 4, min = 1, max = 1000, doc = "cells", restart = true),
-    ParamSpec("rate", default = 1.0, min = 0.0, max = 100.0)
-  )
-
-private object Chain extends Model[ChainParams]:
-  type State = Array[Double]
-  val id = "chain"
-  val version = "1"
-  val params: ParamSchema[ChainParams] = ChainParams.schema
-
-  def init(p: ChainParams, rng: SplittableRng): Array[Double] =
-    Array.tabulate(p.n)(i => rng.fork(i.toLong).nextDouble())
-
-  def advance(state: Array[Double], p: ChainParams, dt: Double, ctx: StepContext): Unit =
-    var i = 0
-    while i < state.length do
-      state(i) += p.rate * dt * (i + 1)
-      i += 1
-    ctx.taken = dt
-    ctx.suggestedNext = dt
-
-  def digest(state: Array[Double]): Long = Digest.ofDoubles(state)
+import physis.core.testing.Chain
 
 class LiveRestartSuite extends munit.FunSuite:
   private given StateExport[Array[Double]] with

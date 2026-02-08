@@ -42,6 +42,12 @@ final class Snapshot(val stateSize: Int, val probeCount: Int):
   /** Probe values, in the order of the run's probes. */
   val probes: Array[Double] = new Array[Double](probeCount)
 
+  /** Named parts of [[state]], for models whose state holds fields; empty otherwise. */
+  var slices: IndexedSeq[Slice] = Vector.empty
+
+  /** The slice called `name`, if the state has one. */
+  def slice(name: String): Option[Slice] = slices.find(_.name == name)
+
   /** Parameter names in schema order; set once per run. */
   var paramNames: IndexedSeq[String] = Vector.empty
 
@@ -54,6 +60,19 @@ final class Snapshot(val stateSize: Int, val probeCount: Int):
     if i < 0 then Double.NaN else paramValues(i)
 
 /**
+ * A rectangular part of the exported state: `width * height` values starting at `offset`, in
+ * row-major order (row 0 first). A scalar series is a slice of height 1.
+ */
+final case class Slice(name: String, offset: Int, width: Int, height: Int):
+  require(offset >= 0 && width > 0 && height > 0, s"bad slice $name: $offset, $width x $height")
+
+  /** Number of values. */
+  def length: Int = width * height
+
+  /** Index into the exported state of the value at column `x`, row `y`. */
+  def index(x: Int, y: Int): Int = offset + y * width + x
+
+/**
  * Copies a model state into a flat array without allocating, so the UI can read it.
  *
  * @tparam S state type
@@ -64,3 +83,9 @@ trait StateExport[-S]:
 
   /** Writes the exported vector into `out`, which has at least `size(state)` elements. */
   def copyInto(state: S, out: Array[Double]): Unit
+
+  /**
+   * Names the parts of the exported vector. Called once per run (again after a restart), not
+   * per publish; empty for models whose state is just a vector.
+   */
+  def layout(state: S): IndexedSeq[Slice] = Vector.empty
