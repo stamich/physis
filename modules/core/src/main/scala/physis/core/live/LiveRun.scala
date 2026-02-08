@@ -15,6 +15,13 @@ enum Command:
   /** Named parameter changes, validated through the model's schema. */
   case SetParams(values: Map[String, Double])
 
+  /**
+   * Builds a new run from the definition with `values` replacing named parameters (restart-only
+   * ones included) and, optionally, a new seed. Time, step count and the event log start again;
+   * the new definition also becomes what [[Reset]] returns to. On error the old run continues.
+   */
+  case Restart(values: Map[String, Double], seed: Option[Long])
+
 /**
  * Drives a [[Run]] from a dedicated simulation thread against wall-clock time.
  *
@@ -48,16 +55,22 @@ final class LiveRun[P, S](
   @volatile private var thread: Thread = null
 
   // Owned by the simulation thread once started.
+  private var base: RunBuilder[P, S] = builder
   private var run: Run[P, S] = builder.build()
   private val paramNames = run.model.params.names
-  private val buffer =
-    new TripleBuffer[Snapshot](() => new Snapshot(exporter.size(run.state), run.probes.size))
+  // Replaced by the simulation thread when a restart changes the size of the exported state.
+  @volatile private var buffer: TripleBuffer[Snapshot] = newBuffer()
   private var paused = startPaused
   private var speed = initialSpeed
   private var simTarget = 0.0
   private var error = ""
   private var paramValues: IndexedSeq[Double] = run.model.params.toValues(run.params)
   private var paramEventsSeen = 0
+
+  private def newBuffer(): TripleBuffer[Snapshot] =
+    val size = exporter.size(run.state)
+    val probes = run.probes.size
+    new TripleBuffer[Snapshot](() => new Snapshot(size, probes))
 
   /** Starts the simulation thread ("physis-sim"). */
   def start(): Unit = synchronized {
@@ -161,11 +174,9 @@ final class LiveRun[P, S](
           simTarget = run.time
         case Command.StepOnce => if paused then run.step()
         case Command.Reset =>
-          run = builder.build()
-          simTarget = 0.0
-          paramEventsSeen = 0
-          paramValues = run.model.params.toValues(run.params)
-          error = ""
+          run = base.build()
+          afterNewRun()
+        case Command.Restart(values, newSeed) => restart(values, newSeed)
         case Command.SetSpeed(s) =>
           if s > 0.0 && !s.isInfinite then
             speed = s
@@ -179,11 +190,29 @@ final class LiveRun[P, S](
       command = commands.poll()
     changed
 
+  private def afterNewRun(): Unit =
+    simTarget = 0.0
+    paramEventsSeen = 0
+    paramValues = run.model.params.toValues(run.params)
+    error = ""
+    if buffer.back.stateSize != exporter.size(run.state) then buffer = newBuffer()
+
+  private def restart(values: Map[String, Double], newSeed: Option[Long]): Unit =
+    try
+      val withValues = base.overrides(values)
+      val next = newSeed.fold(withValues)(withValues.seed)
+      val fresh = next.build()
+      base = next
+      run = fresh
+      afterNewRun()
+    catch case e: IllegalArgumentException => error = e.getMessage
+
   private def publish(now: Long, stepsPerSecond: Double): Unit =
     if run.events.size != paramEventsSeen then
       paramEventsSeen = run.events.size
       paramValues = run.model.params.toValues(run.params)
-    val s = buffer.back
+    val out = buffer
+    val s = out.back
     s.time = run.time
     s.step = run.stepCount
     s.rejected = run.rejectedCount
@@ -199,4 +228,4 @@ final class LiveRun[P, S](
     while i < s.probeCount do
       s.probes(i) = run.probes(i).measure(run.state, run.time)
       i += 1
-    buffer.publish()
+    out.publish()

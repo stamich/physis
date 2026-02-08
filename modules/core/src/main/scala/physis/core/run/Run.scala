@@ -77,12 +77,15 @@ final class Run[P, S] private[run] (
 
   /**
    * Changes parameters from the next step on. Values are validated through the model's schema
-   * and its [[physis.core.Model.check]]; on error nothing changes. Several calls before the next step are merged into one event.
+   * and its [[physis.core.Model.check]]; on error nothing changes. Restart-only parameters
+   * (see [[physis.core.param.ParamSpec.restart]]) are refused with "requires a restart". Several calls before the next step are merged into one event.
    */
   def setParams(values: Map[String, Double]): Either[String, Unit] =
     val merged = pending ++ values
     model.params
-      .withOverrides(current, merged)
+      .restartViolation(current, values)
+      .toLeft(())
+      .flatMap(_ => model.params.withOverrides(current, merged))
       .flatMap(p => model.check(p, stepping))
       .map { _ =>
         pending =
@@ -294,7 +297,9 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
     }
     cfg.events.foldLeft(cfg.params) { (p, e) =>
       cfg.model.params
-        .withOverrides(p, e.values)
+        .restartViolation(p, e.values)
+        .toLeft(())
+        .flatMap(_ => cfg.model.params.withOverrides(p, e.values))
         .flatMap(next => cfg.model.check(next, cfg.stepping).map(_ => next)) match
         case Right(next) => next
         case Left(error) =>

@@ -31,6 +31,8 @@ enum ParamKind:
  * @param unit    unit label for display, e.g. "m", "deg", "1"
  * @param scale   preferred scale for exploration
  * @param doc     one-line description
+ * @param restart whether changing the value needs a new run (an array size, say), so a running
+ *                run refuses it; see [[ParamSchema.restartViolation]]
  */
 final case class ParamSpec(
     name: String,
@@ -39,7 +41,8 @@ final case class ParamSpec(
     max: Double = Double.PositiveInfinity,
     unit: String = "1",
     scale: Scale = Scale.Linear,
-    doc: String = ""
+    doc: String = "",
+    restart: Boolean = false
 ):
   require(name.nonEmpty, "parameter name must not be empty")
   require(min <= max, s"parameter '$name': min ($min) > max ($max)")
@@ -102,6 +105,17 @@ trait ParamSchema[P]:
 
   /** Field kinds in field order; all [[ParamKind.Real]] unless the schema knows better. */
   def kinds: IndexedSeq[ParamKind] = specs.map(_ => ParamKind.Real)
+
+  /**
+   * The first change in `changes` that would alter a restart-only parameter of `current`, as a
+   * message. Setting such a parameter to the value it already has is not a change.
+   */
+  final def restartViolation(current: P, changes: Map[String, Double]): Option[String] =
+    val now = toMap(current)
+    specs.collectFirst {
+      case spec if spec.restart && changes.get(spec.name).exists(_ != now(spec.name)) =>
+        s"parameter '${spec.name}' requires a restart"
+    }
 
   /** Named values in field order. */
   final def toMap(p: P): VectorMap[String, Double] = VectorMap.from(names.zip(toValues(p)))
