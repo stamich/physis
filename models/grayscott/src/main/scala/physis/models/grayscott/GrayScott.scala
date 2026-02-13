@@ -225,11 +225,14 @@ object GrayScott extends Model[GrayScottParams]:
 
   val probes: Vector[Probe[GrayScottState]] = Vector(meanU, meanV, maxV, coverage)
 
-  /** Named regimes from Pearson's classification of the (F, k) plane. */
+  /**
+   * Named regimes of the (F, k) plane after Pearson's classification, each checked against the
+   * independent reference in `tools/gray_scott_reference.py` to grow a pattern from the seed.
+   */
   val presets: Vector[Preset] = Vector(
     Preset("Mitosis", Map("F" -> 0.0367, "k" -> 0.0649), "Spots that grow and divide"),
     Preset("Coral", Map("F" -> 0.0545, "k" -> 0.0620), "Coral-like growth"),
     Preset("Maze", Map("F" -> 0.0290, "k" -> 0.0570), "Labyrinth of stripes"),
     Preset("Solitons", Map("F" -> 0.0300, "k" -> 0.0620), "Pulsating solitons"),
-    Preset("Worms", Map("F" -> 0.0780, "k" -> 0.0610), "Wandering worms")
+    Preset("Worms", Map("F" -> 0.0540, "k" -> 0.0629), "Thick worms")
   )
