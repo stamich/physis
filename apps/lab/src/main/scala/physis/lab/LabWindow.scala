@@ -22,6 +22,7 @@ import javafx.scene.layout.{
 import physis.core.live.Command
 import physis.fx.{
   Fx,
+  HeatmapRenderer,
   ParamPanel,
   PlotRenderer,
   RenderLoop,
@@ -230,7 +231,10 @@ object LabWindow:
     case v: View.Scene2D =>
       val r = new SceneRenderer(v)
       (r.node, Seq(r))
-    case v @ (_: View.Heatmap | _: View.Particles) =>
+    case v: View.Heatmap =>
+      val r = new HeatmapRenderer(v)
+      (r.node, Seq(r))
+    case v: View.Particles =>
       throw new UnsupportedOperationException(s"no renderer for $v yet")
     case View.Layout(views, direction) =>
       val parts = views.map(build)
