@@ -24,6 +24,7 @@ import physis.fx.{
   Fx,
   HeatmapRenderer,
   ParamPanel,
+  ParticlesRenderer,
   PlotRenderer,
   RenderLoop,
   Renderer,
@@ -235,7 +236,8 @@ object LabWindow:
       val r = new HeatmapRenderer(v)
       (r.node, Seq(r))
     case v: View.Particles =>
-      throw new UnsupportedOperationException(s"no renderer for $v yet")
+      val r = new ParticlesRenderer(v)
+      (r.node, Seq(r))
     case View.Layout(views, direction) =>
       val parts = views.map(build)
       val grid = new GridPane()
