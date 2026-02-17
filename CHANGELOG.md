@@ -2,6 +2,58 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.3.0 — fields and agents
+
+Third milestone: numerical fields and agent-based models. Two new models, Gray–Scott
+reaction–diffusion and Boids, run live in Physis Lab with presets, seeds and replayable sessions.
+
+### Added
+
+- **Fields** (`modules/fields`): `Grid2D` and `Field2D` with a one-cell halo; periodic,
+  Dirichlet and Neumann boundaries; 5- and 9-point Laplacians with their symbols; see
+  [docs/fields.md](docs/fields.md).
+- **Agents** (`modules/fields`): `ParticleSet` (named columns, slices, digest) and `NeighborGrid`,
+  a cell list with a stable counting sort and an allocation-free inline `foreachNear`.
+- **Core**: `Digest.ofRange`, `fold` and `start`; `Model.check(params, stepping)`, run when a
+  run is built and when parameters change live, so unstable values are refused with a message;
+  `ParamSpec.restart` and `Command.Restart(values, seed)` for parameters that change the size of
+  the state; `Snapshot.slices` and `StateExport.layout` for named parts of the state.
+- **Verification** (`modules/verify`): `Convergence.hasOrder`, `Conservation.nonIncreasing`,
+  `Neighbours` (brute-force search, displacement, comparison of neighbour sets).
+- **Gray–Scott** (`models/grayscott`): Pearson's model with five presets, probes, stability limit
+  `D·dt ≤ 1.25`, an independent numpy reference (`tools/gray_scott_reference.py`) and golden data;
+  [docs/models/gray-scott.md](docs/models/gray-scott.md).
+- **Boids** (`models/boids`): Reynolds' rules with a counter-based random turn, three presets
+  including the disordered Vicsek model, an independent reference for the thresholds
+  (`tools/boids_reference.py`); [docs/models/boids.md](docs/models/boids.md).
+- **physis-view**: `View.Heatmap`, `View.Particles`, `ValueRange`, `HeatmapRaster` (field values
+  to packed ARGB through a 256-entry table).
+- **physis-fx**: `HeatmapRenderer` (JavaFX `PixelBuffer`, with `PixelWriter` as fallback),
+  `ColorBar`, `ParticlesRenderer` (16 heading bands, one fill each, wrapped copies at the edges),
+  `PresetPicker`, `SeedBar`; `RunControls` takes the speed range and its text from the model;
+  `ParamPanel` marks restart-only parameters and applies them together.
+- **Physis Lab**: Gray–Scott (10–4 000 steps/s, 600 by default) and Boids (0.1x–20x); preset
+  drop-down, seed field with Reseed, Apply for restart-only parameters, the value of the cell
+  under the pointer in the bottom bar.
+- **Examples**: `RunHeadless` runs `gray-scott` and `boids` with the model's own step, prints
+  their probes as CSV, writes and replays manifests.
+- **Tests**: slow throughput tests (Gray–Scott 15 million cell updates per second, 2 000 boids
+  500 steps per second), a Lab session test for Gray–Scott with parameter changes and a restart,
+  and screenshots of both new models as CI artifacts.
+
+### Changed from the 0.3 plan
+
+- The Worms preset uses F 0.0540, k 0.0629; the planned 0.078 / 0.061 died out in the reference.
+- The Gray–Scott reference run is 64 × 64 (a seed of 3 cells on 32 × 32 dies out in 100 steps),
+  and the regime tests run without noise, as the reference does.
+- Allocation tests assert less than one byte per step instead of exactly zero: a fixed overhead
+  of a few dozen bytes is not a per-step cost.
+- Boids use a Taylor series for the random rotation instead of `StrictMath`, which allocates in
+  its trigonometry; the result is still identical on every platform.
+- Drawing into the field with a brush is not part of 0.3; it moves to 0.4 together with a
+  replayable brush.
+- The slow tests run on every pull request (as in 0.2).
+
 ## 0.2.0 — physis-fx and Physis Lab
 
 Second milestone: a window on the 0.1 engine. Physis Lab runs a model live, draws it every frame

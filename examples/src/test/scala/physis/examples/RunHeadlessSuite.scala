@@ -79,3 +79,49 @@ class RunHeadlessSuite extends munit.FunSuite:
     assertEquals(capture("--model", "nope")._1, 1)
     assertEquals(capture("--param", "rho=-1")._1, 1)
   }
+
+  test("Gray-Scott prints its probes with the model's own step") {
+    val (code, csv, summary) = capture(
+      "--model",
+      "gray-scott",
+      "--param",
+      "nx=64",
+      "--param",
+      "ny=64",
+      "--until",
+      "200",
+      "--sample-every",
+      "100"
+    )
+    assertEquals(code, 0, summary)
+    val lines = csv.linesIterator.toList
+    assertEquals(lines.head, "t,u_mean,v_mean,v_max,coverage")
+    assertEquals(lines.tail.map(_.takeWhile(_ != ',')), List("0.0", "100.0", "200.0"))
+    assert(summary.contains("accepted 200"), summary)
+  }
+
+  test("Boids replays from a manifest to the same digest") {
+    val path = Files.createTempFile("physis-boids", ".json")
+    try
+      val (code, csv, summary) = capture(
+        "--model",
+        "boids",
+        "--param",
+        "n=100",
+        "--until",
+        "1",
+        "--sample-every",
+        "0.5",
+        "--seed",
+        "5",
+        "--manifest",
+        path.toString
+      )
+      assertEquals(code, 0, summary)
+      assertEquals(csv.linesIterator.next(), "t,polarization,mean_speed,mean_neighbours")
+      val (replayCode, replayCsv, replaySummary) = capture("--replay", path.toString)
+      assertEquals(replayCode, 0, replaySummary)
+      assertEquals(replayCsv, csv)
+      assertEquals(replaySummary, summary)
+    finally Files.delete(path)
+  }
