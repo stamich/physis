@@ -33,6 +33,38 @@ class LabManifestsSuite extends munit.FunSuite:
     finally live.stop()
   }
 
+  test("a Gray-Scott session with three changes and a reseed replays to the same digest") {
+    val session = Catalog.grayScott.open(seed = 3L, startPaused = true)
+    val live = session.live
+    live.start()
+    try
+      def steps(n: Int): Unit = for _ <- 1 to n do live.send(Command.StepOnce)
+      steps(40)
+      live.send(Command.SetParams(Map("F" -> 0.03, "k" -> 0.057)))
+      steps(30)
+      live.send(Command.Restart(Map("nx" -> 64.0, "ny" -> 64.0), Some(9L)))
+      steps(25)
+      live.send(Command.SetParams(Map("F" -> 0.0545, "k" -> 0.062)))
+      steps(25)
+      live.send(Command.SetParams(Map("Dv" -> 0.4)))
+      steps(20)
+      live.send(Command.SetParams(Map("Du" -> 0.9)))
+      steps(10)
+      val deadline = System.currentTimeMillis() + 20_000
+      while live.manifest().steps.forall(_ < 80L) do
+        assert(System.currentTimeMillis() < deadline, "steps not taken")
+        Thread.sleep(10)
+      val file = Files.createTempFile("physis-lab-gs", ".json")
+      val saved = LabManifests.save(live, file).fold(e => fail(e), identity)
+      assertEquals(saved.seed, 9L)
+      assertEquals(saved.events.size, 3)
+      val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+      assertEquals(report.steps, 80L)
+      assertEquals(report.matches, Some(true), report.summary)
+      Files.delete(file)
+    finally live.stop()
+  }
+
   test("replay reports unreadable files and a changed digest") {
     assert(LabManifests.replay(
       java.nio.file.Path.of("/nonexistent/m.json"),

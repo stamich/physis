@@ -106,7 +106,7 @@ class LabWindowSuite extends LabSuite:
       LabFx.onFx(window.reseed(5L))
       LabFx.await("run started again")(latest(window)(_.step < 300))
       assertEquals(LabFx.onFx(window.session.get.live.manifest().seed), 5L)
-      // the preset is part of the run's parameters until the next reset, so it is kept
+      // a reseed keeps the parameters the user has chosen, here the preset
       assertEquals(LabFx.onFx(window.loop.get.snapshot.get.param("F")), 0.029)
     }
   }
