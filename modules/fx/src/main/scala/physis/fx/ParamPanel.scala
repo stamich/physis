@@ -5,6 +5,7 @@ import java.util.Locale
 import javafx.geometry.Insets
 import javafx.scene.Node
 import javafx.scene.control.{
+  Button,
   CheckBox,
   Label,
   Slider,
@@ -13,7 +14,9 @@ import javafx.scene.control.{
   TextField,
   Tooltip
 }
-import javafx.scene.layout.{ColumnConstraints, GridPane, HBox, Priority}
+import javafx.scene.layout.{ColumnConstraints, GridPane, HBox, Priority, VBox}
+
+import scala.collection.mutable
 
 import physis.core.live.Snapshot
 import physis.core.param.ParamSchema
@@ -23,11 +26,16 @@ import physis.core.param.ParamSchema
  * [[ControlSpec]]). Every accepted edit calls `onChange(name, value)`; invalid text is marked
  * red and not sent. [[refresh]] shows values from the run (e.g. after a reset) without echoing
  * them back.
+ *
+ * Parameters that only take effect with a restart (grid size, number of particles) are marked
+ * with a star. Editing one does not call `onChange`: the value waits, and the "Apply" button
+ * passes all waiting values to `onRestart` at once.
  */
 final class ParamPanel(
     schema: ParamSchema[?],
     initial: Map[String, Double],
-    onChange: (String, Double) => Unit
+    onChange: (String, Double) => Unit,
+    onRestart: Map[String, Double] => Unit = _ => ()
 ):
   val specs: Vector[ControlSpec] = ControlSpec.of(schema)
 
@@ -43,8 +51,37 @@ final class ParamPanel(
     }
   )
 
+  private val waiting = mutable.LinkedHashMap.empty[String, Double]
+
+  /** Applies the waiting restart values; disabled while there are none. */
+  val applyButton: Button = new Button("Apply and restart")
+  applyButton.setDisable(true)
+  applyButton.setOnAction(_ => applyRestart())
+
+  private val hasRestart = specs.exists(_.spec.restart)
+  private val box = new VBox(grid)
+  if hasRestart then
+    val bar = new HBox(applyButton)
+    bar.setPadding(new Insets(0, 8, 8, 8))
+    val _ = box.getChildren.add(bar)
+
   /** The panel's node. */
-  val node: Node = grid
+  val node: Node = box
+
+  /** Restart-only values edited but not applied yet. */
+  def pendingRestart: Map[String, Double] = waiting.toMap
+
+  /** Forgets the waiting restart values and shows the run's again at the next [[refresh]]. */
+  def discardEdits(): Unit =
+    waiting.clear()
+    applyButton.setDisable(true)
+
+  private def applyRestart(): Unit =
+    if waiting.nonEmpty then
+      val values = waiting.toMap
+      waiting.clear()
+      applyButton.setDisable(true)
+      onRestart(values)
 
   private var updating = false
   private val rows: Vector[Row] = specs.zipWithIndex.map((spec, i) => row(spec, i))
@@ -55,14 +92,21 @@ final class ParamPanel(
   /** Shows the run's current values; rows being edited keep what the user typed. */
   def refresh(snapshot: Snapshot): Unit =
     updating = true
-    try rows.foreach(r => r.show(snapshot.param(r.spec.name)))
+    try
+      rows.foreach(r => if !waiting.contains(r.spec.name) then r.show(snapshot.param(r.spec.name)))
     finally updating = false
 
-  private def send(name: String, value: Double): Unit = if !updating then onChange(name, value)
+  private def send(name: String, value: Double): Unit =
+    if !updating then
+      if specs.exists(c => c.name == name && c.spec.restart) then
+        waiting.update(name, value)
+        applyButton.setDisable(false)
+      else onChange(name, value)
 
   private def row(c: ControlSpec, index: Int): Row =
-    val label = new Label(c.label)
-    if c.spec.doc.nonEmpty then label.setTooltip(new Tooltip(c.spec.doc))
+    val label = new Label(if c.spec.restart then c.label + " *" else c.label)
+    val note = if c.spec.restart then " (needs a restart: press Apply)" else ""
+    if c.spec.doc.nonEmpty || c.spec.restart then label.setTooltip(new Tooltip(c.spec.doc + note))
     val start = initial.getOrElse(c.name, c.spec.default)
     val r = c.control match
       case ControlKind.Slider(min, max, _) => sliderRow(c, min, max, start)

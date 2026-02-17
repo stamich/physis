@@ -69,6 +69,9 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
     onCell(None)
   }
 
+  /** Name of the slice this renderer shows. */
+  def sliceName: String = view.slice
+
   /** Whether frames go through a `PixelBuffer` (otherwise through `PixelWriter`). */
   def pixelBufferPath: Boolean = buffer != null
 
