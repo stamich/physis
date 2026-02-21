@@ -9,8 +9,9 @@ import physis.core.{BuildInfo, Model, Stepping}
  * seed, parameter changes and duration. Written next to every output; [[Manifest.replay]]
  * re-creates the run.
  *
- * JSON format 2 adds `events`, `steps` and `digest`; format-1 manifests (Physis 0.1) still read,
- * with no events.
+ * JSON format 2 adds `events`, `steps` and `digest`; format 3 adds `interventions`. A manifest
+ * without interventions is still written as format 2, so older tools keep reading it; formats 1
+ * and 2 read as before, with no interventions.
  *
  * @param physis       framework version that produced the run
  * @param model        model id, resolved through a [[ModelRegistry]]
@@ -27,6 +28,8 @@ import physis.core.{BuildInfo, Model, Stepping}
  *                     sessions; needed for a bit-exact replay whenever parameters changed
  *                     between sample times, since landing on other times changes step sizes
  * @param digest       final state digest recorded when the manifest was written, if known
+ * @param interventions edits of the state made while the run was in progress. At one step they
+ *                     apply after the parameter changes, in the order listed
  */
 final case class Manifest(
     physis: String,
@@ -40,7 +43,8 @@ final case class Manifest(
     git: Option[String],
     events: Vector[ParamEvent] = Vector.empty,
     steps: Option[Long] = None,
-    digest: Option[Long] = None
+    digest: Option[Long] = None,
+    interventions: Vector[InterventionEvent] = Vector.empty
 )
 
 /** A run re-created from a manifest, ready to execute to the manifest's end. */
@@ -65,17 +69,22 @@ object Manifest:
       until = until,
       sampleEvery = run.sampleEvery,
       git = BuildInfo.git,
-      events = run.events
+      events = run.events,
+      interventions = run.interventions
     )
 
-  /** Version of the JSON layout written by [[toJson]]. */
-  val Format = 2
+  /** Newest JSON layout this version reads; [[toJson]] writes 2 unless there are interventions. */
+  val Format = 3
 
   def toJson(m: Manifest): String =
+    val format = if m.interventions.isEmpty then 2L else 3L
+    val extra =
+      if m.interventions.isEmpty then Vector.empty
+      else Vector("interventions" -> Json.JArr(m.interventions.map(interventionToJson)))
     Json.render(
       Json.JObj(
         Vector(
-          "format" -> Json.num(Format.toLong),
+          "format" -> Json.num(format),
           "physis" -> Json.JStr(m.physis),
           "model" -> Json.JStr(m.model),
           "modelVersion" -> Json.JStr(m.modelVersion),
@@ -88,7 +97,7 @@ object Manifest:
           "events" -> Json.JArr(m.events.map(eventToJson)),
           "steps" -> m.steps.fold(Json.JNull)(Json.num(_)),
           "digest" -> m.digest.fold(Json.JNull)(Json.num(_))
-        )
+        ) ++ extra
       )
     ) + "\n"
 
@@ -109,6 +118,7 @@ object Manifest:
       events <- root.optionalField("events").flatMap(eventsFromJson)
       steps <- root.optionalField("steps").flatMap(optionalLong)
       digest <- root.optionalField("digest").flatMap(optionalLong)
+      interventions <- root.optionalField("interventions").flatMap(interventionsFromJson)
     yield Manifest(
       physis,
       model,
@@ -121,7 +131,8 @@ object Manifest:
       git,
       events,
       steps,
-      digest
+      digest,
+      interventions
     )
 
   /**
@@ -147,6 +158,7 @@ object Manifest:
           .seed(m.seed)
           .sampleEvery(m.sampleEvery)
           .events(m.events)
+          .interventions(m.interventions)
           .build()
         Right(Replay(run, m.until, m.steps))
       catch case e: IllegalArgumentException => Left(e.getMessage)
@@ -211,6 +223,30 @@ object Manifest:
               step <- item.field("step").flatMap(_.asLong)
               values <- item.field("values").flatMap(paramsFromJson)
             yield events :+ ParamEvent(step, values)
+          }
+        }
+
+  private def interventionToJson(e: InterventionEvent): Json =
+    Json.JObj(
+      Vector("step" -> Json.num(e.step)) ++ (Intervention.toJson(e.intervention) match
+        case Json.JObj(fields) => fields
+        case other => Vector("intervention" -> other))
+    )
+
+  private def interventionsFromJson(
+      json: Option[Json]
+  ): Either[String, Vector[InterventionEvent]] =
+    json match
+      case None | Some(Json.JNull) => Right(Vector.empty)
+      case Some(array) =>
+        array.asArray.flatMap { items =>
+          items.foldLeft[Either[String, Vector[InterventionEvent]]](Right(Vector.empty)) {
+            (acc, item) =>
+              for
+                found <- acc
+                step <- item.field("step").flatMap(_.asLong)
+                iv <- Intervention.fromJson(item)
+              yield found :+ InterventionEvent(step, iv)
           }
         }
 
