@@ -3,7 +3,7 @@ package physis.core.live
 import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeUnit}
 import java.util.concurrent.locks.LockSupport
 
-import physis.core.run.{Manifest, Run, RunBuilder}
+import physis.core.run.{Intervention, Manifest, Run, RunBuilder}
 
 /** Instructions from the UI to a [[LiveRun]], applied by the simulation thread between steps. */
 enum Command:
@@ -21,6 +21,14 @@ enum Command:
    * the new definition also becomes what [[Reset]] returns to. On error the old run continues.
    */
   case Restart(values: Map[String, Double], seed: Option[Long])
+
+  /**
+   * An edit of the state (a brush dab, a pulse). It is checked when the command is read and
+   * applied immediately before the next step, after any parameter change of that step; a
+   * paused run applies it at the next single step or when it resumes. Edits are recorded in the
+   * manifest, and [[Reset]] and [[Restart]] clear them with the rest of the log.
+   */
+  case Intervene(intervention: Intervention)
 
 /**
  * Drives a [[Run]] from a dedicated simulation thread against wall-clock time.
@@ -67,6 +75,7 @@ final class LiveRun[P, S](
   private var error = ""
   private var paramValues: IndexedSeq[Double] = run.model.params.toValues(run.params)
   private var paramEventsSeen = 0
+  private var refusalShown: Option[String] = None
 
   private def newBuffer(): TripleBuffer[Snapshot] =
     val size = exporter.size(run.state)
@@ -102,9 +111,9 @@ final class LiveRun[P, S](
     answerManifestRequests()
 
   /**
-   * Manifest of the session so far: initial parameters, every parameter change as a step-indexed
-   * event, the exact number of steps taken and the final digest. Replaying it takes the same
-   * steps and reproduces the digest bit for bit.
+   * Manifest of the session so far: initial parameters, every parameter change and every
+   * intervention as step-indexed events, the exact number of steps taken and the final digest.
+   * Replaying it takes the same steps and reproduces the digest bit for bit.
    *
    * Taken by the simulation thread between two steps; callable from any thread.
    */
@@ -183,6 +192,10 @@ final class LiveRun[P, S](
             speed = s
             simTarget = run.time
           else error = s"invalid speed $s"
+        case Command.Intervene(iv) =>
+          run.intervene(iv) match
+            case Right(()) => error = ""
+            case Left(message) => error = message
         case Command.SetParams(values) =>
           run.setParams(values) match
             case Right(()) => error = ""
@@ -194,6 +207,7 @@ final class LiveRun[P, S](
   private def afterNewRun(): Unit =
     simTarget = 0.0
     paramEventsSeen = 0
+    refusalShown = None
     paramValues = run.model.params.toValues(run.params)
     layout = exporter.layout(run.state)
     error = ""
@@ -213,12 +227,16 @@ final class LiveRun[P, S](
     if run.events.size != paramEventsSeen then
       paramEventsSeen = run.events.size
       paramValues = run.model.params.toValues(run.params)
+    if run.lastRefusal != refusalShown then
+      refusalShown = run.lastRefusal
+      refusalShown.foreach(message => error = message)
     val out = buffer
     val s = out.back
     s.slices = layout
     s.time = run.time
     s.step = run.stepCount
     s.rejected = run.rejectedCount
+    s.interventions = run.interventions.size
     s.stepsPerSecond = stepsPerSecond
     s.speed = speed
     s.paused = paused
