@@ -5,6 +5,7 @@ import physis.core.{Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec, Preset}
 import physis.core.random.SplittableRng
+import physis.core.run.{Disc, Intervention}
 
 /**
  * Parameters of the Boids model.
@@ -84,6 +85,36 @@ final class BoidsState(
   private var accVelY = 0.0
   private var accCohX = 0.0
   private var accCohY = 0.0
+
+  /** See [[Boids.intervene]]. */
+  def disturb(disc: Disc, strength: Double): Unit =
+    val r2 = disc.r * disc.r
+    val cosTurn = Noise.cos(strength)
+    val sinTurn = Noise.sin(strength)
+    var i = 0
+    while i < n do
+      var dx = x(i) - disc.x
+      var dy = y(i) - disc.y
+      dx -= width * math.rint(dx / width)
+      dy -= height * math.rint(dy / height)
+      val d2 = dx * dx + dy * dy
+      if d2 <= r2 && d2 > 0.0 then
+        val d = math.sqrt(d2)
+        val rx = dx / d
+        val ry = dy / d
+        val speed = math.sqrt(vx(i) * vx(i) + vy(i) * vy(i))
+        if speed > 0.0 then
+          val cosAngle = (vx(i) * rx + vy(i) * ry) / speed
+          if cosAngle >= cosTurn then
+            vx(i) = speed * rx
+            vy(i) = speed * ry
+          else
+            val side = if vx(i) * ry - vy(i) * rx < 0.0 then -1.0 else 1.0
+            val ux = vx(i)
+            val uy = vy(i)
+            vx(i) = ux * cosTurn - side * uy * sinTurn
+            vy(i) = side * ux * sinTurn + uy * cosTurn
+      i += 1
 
   /** Neighbours counted in the latest step, summed over all boids. */
   var neighbourLinks: Long = 0L
@@ -302,6 +333,32 @@ object Boids extends Model[BoidsParams]:
     ctx.suggestedNext = dt
 
   def digest(state: BoidsState): Long = state.particles.digest
+
+  /** Largest turn of a Disturb, in radians: the range of the rotation series in [[Noise]]. */
+  val MaxDisturb: Double = 2.0
+
+  override def accepts(iv: Intervention): Either[String, Unit] = iv match
+    case Intervention.Disturb(_, strength) =>
+      if strength > 0.0 && strength <= MaxDisturb then Right(())
+      else Left(s"disturb strength must be in (0, $MaxDisturb] radians, got $strength")
+    case _ => Left("boids only take Disturb: they have no fields to paint")
+
+  /**
+   * Disturb turns every boid whose position is inside the disc (minimum-image distance on the
+   * periodic world, in world units) towards the direction pointing away from the disc centre by
+   * `strength` radians, or exactly onto it when it is closer than that. The speed is kept. It
+   * uses no random numbers and no library trigonometry, so it replays exactly on every platform.
+   */
+  override def intervene(
+      state: BoidsState,
+      p: BoidsParams,
+      iv: Intervention
+  ): Either[String, Unit] =
+    accepts(iv).map { _ =>
+      iv match
+        case Intervention.Disturb(disc, strength) => state.disturb(disc, strength)
+        case _ => ()
+    }
 
   /** Order parameter of the flock: 0 for random headings, 1 for a perfectly aligned flock. */
   val polarization: Probe[BoidsState] = Probe[BoidsState]("polarization")((s, _) => s.polarization)
