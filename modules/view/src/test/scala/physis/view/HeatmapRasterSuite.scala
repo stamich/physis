@@ -73,7 +73,7 @@ class HeatmapRasterSuite extends munit.FunSuite:
 
   test("the heatmap and particle views have usable defaults") {
     View.Heatmap("u") match
-      case View.Heatmap(slice, range, colormap, title) =>
+      case View.Heatmap(slice, range, colormap, title, _) =>
         assertEquals((slice, range, colormap, title), ("u", ValueRange.Auto, Colormap.Viridis, ""))
       case other => fail(s"expected a heatmap, got $other")
     View.Particles() match
