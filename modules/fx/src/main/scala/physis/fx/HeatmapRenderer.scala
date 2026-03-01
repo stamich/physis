@@ -19,6 +19,11 @@ import physis.view.{HeatmapRaster, View}
  * so a frame is one pass over the cells and one buffer update. When a `PixelBuffer` cannot be
  * created, or `usePixelBuffer` is false, the same pixels go through `PixelWriter.setPixels`.
  * The image keeps the aspect ratio of the grid and is not smoothed: a cell stays a square.
+ *
+ * With an `overlay` slice in the view, a second pass over the same pixel array paints the cells
+ * of that slice that are 1 or more in flat grey (walls), so both pixel paths show the same
+ * image. A symmetric value range puts zero at the middle colour, and the colour bar then reads
+ * from -a to a.
  */
 final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) extends Renderer:
   import HeatmapRenderer.*
@@ -102,6 +107,12 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
         lo = l
         hi = h
         HeatmapRaster.fill(values, 0, nx, ny, lut, lo, hi, pixels)
+        view.overlay.foreach { name =>
+          s.slice(name) match
+            case Some(mask) if mask.width == nx && mask.height == ny =>
+              HeatmapRaster.overlay(s.state, mask.offset, nx, ny, pixels)
+            case _ => ()
+        }
         fresh = true
 
   private def resize(w: Int, h: Int): Unit =
