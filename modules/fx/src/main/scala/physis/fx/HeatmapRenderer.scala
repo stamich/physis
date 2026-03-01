@@ -5,11 +5,15 @@ import java.nio.IntBuffer
 import javafx.geometry.Rectangle2D
 import javafx.scene.control.Label
 import javafx.scene.image.{ImageView, PixelBuffer, PixelFormat, WritableImage}
+import javafx.scene.Node
+import javafx.scene.input.{MouseButton, MouseEvent, ScrollEvent}
 import javafx.scene.layout.{Background, BackgroundFill, HBox, Pane, Priority, Region, VBox}
+import javafx.scene.paint.Color
+import javafx.scene.shape.Circle
 import javafx.util.Callback
 
 import physis.core.live.Snapshot
-import physis.view.{HeatmapRaster, View}
+import physis.view.{HeatmapRaster, StrokePlanner, View}
 
 /**
  * Draws a [[View.Heatmap]]: one slice of the snapshot as an image with one pixel per cell, a
@@ -24,8 +28,16 @@ import physis.view.{HeatmapRaster, View}
  * of that slice that are 1 or more in flat grey (walls), so both pixel paths show the same
  * image. A symmetric value range puts zero at the middle colour, and the colour bar then reads
  * from -a to a.
+ *
+ * Pointer tools: while a brush is enabled ([[setBrush]]) the left button starts a stroke, the
+ * right button a secondary stroke (the Lab uses it to erase), and the wheel changes the radius.
+ * The renderer only turns pointer events into dabs in fractional cell coordinates (see
+ * [[StrokePlanner]]) and hands them to [[onStroke]], one batch per frame from [[render]]; what a
+ * dab means is up to the receiver. A ring under the pointer shows the brush; it is a separate
+ * node over the image, never part of the pixels.
  */
-final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) extends Renderer:
+final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) extends Renderer
+    with Paintable:
   import HeatmapRenderer.*
 
   private val imageView = new ImageView()
@@ -68,11 +80,109 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
       val iy = math.min(ny - 1, math.max(0, (e.getY / imageView.getFitHeight * ny).toInt))
       hover = Some((ix, iy))
       onCell(cellAt(ix, iy))
+      pointer = Some((cellX(e), cellY(e)))
+      placeRing()
   }
   imageView.setOnMouseExited { _ =>
     hover = None
     onCell(None)
+    pointer = None
+    placeRing()
   }
+
+  // ---- pointer tools ----
+  private val ring = new Circle()
+  ring.setFill(null)
+  ring.setStroke(Color.WHITE)
+  ring.setStrokeWidth(1.5)
+  ring.setMouseTransparent(true)
+  ring.setManaged(false)
+  ring.setVisible(false)
+  holder.getChildren.add(ring)
+
+  private var brushOn = false
+  private var brushRadius = 8.0
+  private var periodicX = false
+  private var periodicY = false
+  private var stroke: StrokePlanner = null
+  private var strokeSecondary = false
+  private var strokeFinished = false
+  private var pointer: Option[(Double, Double)] = None
+
+  /** Turns the brush on or off and sets its radius in cells (1 to 64 unless changed). */
+  def setBrush(enabled: Boolean, radius: Double): Unit =
+    brushOn = enabled
+    brushRadius = math.max(radiusRange._1, math.min(radiusRange._2, radius))
+    if !enabled then ring.setVisible(false)
+    placeRing()
+
+  def brushEnabled: Boolean = brushOn
+
+  def radius: Double = brushRadius
+
+  def setWrap(x: Boolean, y: Boolean): Unit =
+    periodicX = x
+    periodicY = y
+
+  /** The node that receives the pointer, for tests that send synthetic events. */
+  def pointerTarget: Node = imageView
+
+  /** The ring under the pointer. */
+  def ringNode: Node = ring
+
+  private def scale: Double = if nx > 0 then imageView.getFitWidth / nx else 0.0
+
+  private def cellX(e: MouseEvent): Double = e.getX / scale
+  private def cellY(e: MouseEvent): Double = e.getY / scale
+
+  private def placeRing(): Unit =
+    pointer match
+      case Some((cx, cy)) if brushOn && scale > 0.0 =>
+        ring.setCenterX(imageView.getLayoutX + cx * scale)
+        ring.setCenterY(imageView.getLayoutY + cy * scale)
+        ring.setRadius(brushRadius * scale)
+        ring.setVisible(true)
+      case _ => ring.setVisible(false)
+
+  imageView.setOnMousePressed { e =>
+    if brushOn && scale > 0.0 && (e.getButton == MouseButton.PRIMARY || e.getButton == MouseButton.SECONDARY)
+    then
+      stroke = new StrokePlanner(nx.toDouble, ny.toDouble, periodicX, periodicY)
+      stroke.radius = brushRadius
+      strokeSecondary = e.getButton == MouseButton.SECONDARY
+      strokeFinished = false
+      stroke.begin(cellX(e), cellY(e))
+      pointer = Some((cellX(e), cellY(e)))
+      placeRing()
+  }
+  imageView.setOnMouseDragged { e =>
+    if scale > 0.0 then
+      pointer = Some((cellX(e), cellY(e)))
+      if stroke != null && !strokeFinished then stroke.extend(cellX(e), cellY(e))
+      placeRing()
+  }
+  imageView.setOnMouseReleased { e =>
+    if stroke != null && !strokeFinished then
+      stroke.extend(cellX(e), cellY(e))
+      stroke.end()
+      strokeFinished = true
+  }
+  imageView.setOnScroll { (e: ScrollEvent) =>
+    if brushOn && e.getDeltaY != 0.0 then
+      val step = math.max(1.0, math.round(brushRadius * 0.1).toDouble)
+      val next = if e.getDeltaY > 0.0 then brushRadius + step else brushRadius - step
+      setBrush(true, next)
+      onRadius(brushRadius)
+      e.consume()
+  }
+
+  /** Hands the dabs planned since the last frame to [[onStroke]]. */
+  private def flushStroke(): Unit =
+    if stroke != null then
+      val dabs = stroke.take()
+      if dabs.nonEmpty || strokeFinished then
+        onStroke(StrokeBatch(strokeSecondary, dabs, strokeFinished))
+      if strokeFinished then stroke = null
 
   /** Name of the slice this renderer shows. */
   def sliceName: String = view.slice
@@ -147,6 +257,8 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
         writable.getPixelWriter
           .setPixels(0, 0, nx, ny, PixelFormat.getIntArgbPreInstance, pixels, 0, nx)
     if nx > 0 then bar.update(view.colormap, lo, hi)
+    flushStroke()
+    placeRing()
     hover.foreach((ix, iy) => onCell(cellAt(ix, iy)))
 
 object HeatmapRenderer:
