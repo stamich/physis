@@ -120,6 +120,8 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
 
   def radius: Double = brushRadius
 
+  def stroking: Boolean = stroke != null && !strokeFinished
+
   def setWrap(x: Boolean, y: Boolean): Unit =
     periodicX = x
     periodicY = y
@@ -245,7 +247,7 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
     holder.setGrid(w, h)
     hover = None
 
-  def dirty: Boolean = bar.resized
+  def dirty: Boolean = bar.resized || stroke != null
 
   def reset(): Unit = ()
 

@@ -35,5 +35,8 @@ trait Paintable:
   /** The brush radius. */
   def radius: Double
 
+  /** Whether a stroke is in progress (a button is held down), so shortcuts can wait. */
+  def stroking: Boolean
+
   /** Which axes are periodic, so that strokes wrap across the seam. */
   def setWrap(x: Boolean, y: Boolean): Unit

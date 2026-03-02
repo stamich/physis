@@ -96,6 +96,36 @@ class LabWindowSuite extends LabSuite:
   private def latest(w: LabWindow)(f: physis.core.live.Snapshot => Boolean): Boolean =
     LabFx.onFx(w.loop.flatMap(_.snapshot).exists(f))
 
+  fxTest("painting on Gray-Scott is one recorded intervention per dab, counted in the tool box") {
+    withWindow(Catalog.grayScott.id) { window =>
+      val box = LabFx.onFx(window.toolBox.get)
+      assertEquals(LabFx.onFx(box.selected), None)
+      LabFx.onFx(box.select(Some("Paint v")))
+      val painter = LabFx.onFx(window.paintables.head)
+      LabFx.onFx {
+        painter.onStroke(
+          physis.fx.StrokeBatch(
+            false,
+            Vector(physis.view.Dab(10.5, 10.5), physis.view.Dab(14.5, 10.5)),
+            true
+          )
+        )
+      }
+      LabFx.await("two interventions")(latest(window)(_.interventions == 2))
+      val ivs = LabFx.onFx(window.session.get.live.manifest().interventions)
+      assertEquals(ivs.size, 2)
+      assertEquals(LabFx.onFx(box.counter.getText), "2 strokes recorded")
+      // switched off, a stroke changes nothing
+      LabFx.onFx(box.select(None))
+      LabFx.onFx(painter.onStroke(physis.fx.StrokeBatch(
+        false,
+        Vector(physis.view.Dab(3.0, 3.0)),
+        true
+      )))
+      assertEquals(LabFx.onFx(window.session.get.live.manifest().interventions.size), 2)
+    }
+  }
+
   fxTest("a preset is one parameter change, and a reseed starts the run again") {
     withWindow(Catalog.grayScott.id) { window =>
       LabFx.await("some steps")(latest(window)(_.step > 600))
