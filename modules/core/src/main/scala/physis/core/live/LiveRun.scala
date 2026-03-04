@@ -3,7 +3,7 @@ package physis.core.live
 import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeUnit}
 import java.util.concurrent.locks.LockSupport
 
-import physis.core.run.{Intervention, Manifest, Run, RunBuilder}
+import physis.core.run.{Intervention, InterventionEvent, Manifest, Run, RunBuilder}
 
 /** Instructions from the UI to a [[LiveRun]], applied by the simulation thread between steps. */
 enum Command:
@@ -19,8 +19,16 @@ enum Command:
    * Builds a new run from the definition with `values` replacing named parameters (restart-only
    * ones included) and, optionally, a new seed. Time, step count and the event log start again;
    * the new definition also becomes what [[Reset]] returns to. On error the old run continues.
+   *
+   * `painted` replaces the interventions applied before step 0 (a preset's walls, say); they are
+   * part of the definition, so [[Reset]] and later restarts bring them back. `None` keeps the
+   * ones the definition has.
    */
-  case Restart(values: Map[String, Double], seed: Option[Long])
+  case Restart(
+      values: Map[String, Double],
+      seed: Option[Long],
+      painted: Option[Vector[Intervention]] = None
+  )
 
   /**
    * An edit of the state (a brush dab, a pulse). It is checked when the command is read and
@@ -186,7 +194,7 @@ final class LiveRun[P, S](
         case Command.Reset =>
           run = base.build()
           afterNewRun()
-        case Command.Restart(values, newSeed) => restart(values, newSeed)
+        case Command.Restart(values, newSeed, painted) => restart(values, newSeed, painted)
         case Command.SetSpeed(s) =>
           if s > 0.0 && !s.isInfinite then
             speed = s
@@ -213,10 +221,16 @@ final class LiveRun[P, S](
     error = ""
     if buffer.back.stateSize != exporter.size(run.state) then buffer = newBuffer()
 
-  private def restart(values: Map[String, Double], newSeed: Option[Long]): Unit =
+  private def restart(
+      values: Map[String, Double],
+      newSeed: Option[Long],
+      painted: Option[Vector[Intervention]]
+  ): Unit =
     try
       val withValues = base.overrides(values)
-      val next = newSeed.fold(withValues)(withValues.seed)
+      val withPainting =
+        painted.fold(withValues)(ivs => withValues.interventions(ivs.map(InterventionEvent(0L, _))))
+      val next = newSeed.fold(withPainting)(withPainting.seed)
       val fresh = next.build()
       base = next
       run = fresh

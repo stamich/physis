@@ -1,7 +1,7 @@
 package physis.lab
 
 import physis.core.{Model, Probe, Stepping}
-import physis.core.live.{LiveRun, StateExport}
+import physis.core.live.{Command, LiveRun, StateExport}
 import physis.core.param.{ParamSchema, Preset}
 import physis.core.run.{Disc, Intervention, ModelRegistry, Op, Physis}
 import physis.fx.{RunControls, ToolSpec}
@@ -9,6 +9,7 @@ import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
 import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
+import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
 import physis.view.{Dab, View}
 
@@ -45,6 +46,14 @@ trait LabModel:
 
   /** The speeds of the slider. */
   def speedRange: SpeedRange = SpeedRange.Default
+
+  /**
+   * What applying `preset` means, given the parameters now in force. Usually one parameter
+   * change; a model whose presets also paint restarts instead, with the painting as part of the
+   * new definition.
+   */
+  def presetCommand(preset: Preset, current: Map[String, Double]): Command =
+    Command.SetParams(preset.values)
 
   /** Whether the model has randomness, so that a seed field is useful. */
   def usesSeed: Boolean = false
@@ -111,11 +120,22 @@ final class ModelEntry[P, S](
     override val presets: Vector[Preset],
     override val speedRange: SpeedRange,
     override val tools: Vector[LabTool] = Vector.empty,
-    wrap: Map[String, Double] => Boolean = _ => false
+    wrap: Map[String, Double] => Boolean = _ => false,
+    painted: Map[String, (Int, Int) => Vector[Intervention]] = Map.empty,
+    seeded: Boolean = true
 ) extends LabModel:
   def id: String = model.id
 
-  override def usesSeed: Boolean = true
+  override def usesSeed: Boolean = seeded
+
+  override def presetCommand(preset: Preset, current: Map[String, Double]): Command =
+    painted.get(preset.name) match
+      case None => Command.SetParams(preset.values)
+      case Some(paint) =>
+        val values = current ++ preset.values
+        val nx = values.getOrElse("nx", 0.0).toInt
+        val ny = values.getOrElse("ny", 0.0).toInt
+        Command.Restart(values, None, Some(paint(nx, ny)))
 
   override def wraps(params: Map[String, Double]): Boolean = wrap(params)
 
@@ -132,7 +152,7 @@ final class ModelEntry[P, S](
       model.params.toMap(params).toMap,
       presets,
       speedRange,
-      usesSeed = true,
+      usesSeed = seeded,
       tools = tools
     )
 
@@ -201,9 +221,44 @@ object Catalog:
     wrap = _ => true
   )
 
+  /** One step is half a time unit, so 1x of the slider is 2 steps per time unit. */
+  val wave: LabModel = new ModelEntry[WaveParams, WaveState](
+    "Waves",
+    Wave,
+    Wave.stepping,
+    Wave.probes,
+    WaveViews.default,
+    WaveState.stateExport,
+    WavePresets.all.map(p => Preset(p.name, p.params, p.doc)),
+    SpeedRange(20.0, 2000.0, 300.0, s => f"$s%.0f steps/s"),
+    tools = Vector(
+      LabTool(
+        ToolSpec("Wall", None, 0.0, (0.0, 0.0), (1.0, 40.0), 3.0),
+        (d, r, _, secondary) =>
+          Intervention.Brush(
+            "wall",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            1.0
+          )
+      ),
+      LabTool(
+        ToolSpec("Erase wall", None, 0.0, (0.0, 0.0), (1.0, 40.0), 6.0),
+        (d, r, _, _) => Intervention.Brush("wall", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      ),
+      LabTool(
+        ToolSpec("Pulse", Some("amplitude"), 1.0, (-2.0, 2.0), (2.0, 30.0), 10.0),
+        (d, r, v, _) => Intervention.Pulse("u", d.x, d.y, math.max(1.0, r / 2.5), v)
+      )
+    ),
+    wrap = p => p.getOrElse("edge", 0.0) == 0.0,
+    painted = WavePresets.all.map(p => p.name -> p.interventions).toMap,
+    seeded = false
+  )
+
   /** In menu order; the first one opens at start. */
-  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids)
+  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave)
 
   /** Models by id, for replaying manifests. */
   val registry: ModelRegistry =
-    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids)
+    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave)

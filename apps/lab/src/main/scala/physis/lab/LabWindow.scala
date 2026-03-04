@@ -260,7 +260,7 @@ final class LabWindow(
   /** Applies the preset called `name` of the current model as one parameter change. */
   def applyPreset(name: String): Unit =
     for r <- running; preset <- r.session.presets.find(_.name == name) do
-      r.session.live.send(Command.SetParams(preset.values))
+      r.session.live.send(r.session.model.presetCommand(preset, currentParams()))
 
   /** Starts the current run again with `newSeed`; the parameters stay as they are. */
   def reseed(newSeed: Long): Unit =

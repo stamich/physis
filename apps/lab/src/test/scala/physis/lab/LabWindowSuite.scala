@@ -3,6 +3,7 @@ package physis.lab
 import javafx.scene.Scene
 import javafx.stage.Stage
 
+import physis.core.live.Command
 import physis.view.{Direction, View}
 
 class CatalogSuite extends munit.FunSuite:
@@ -51,6 +52,7 @@ class LabWindowSuite extends LabSuite:
       for id <- Seq(
           Catalog.lorenz.id,
           Catalog.grayScott.id,
+          Catalog.wave.id,
           Catalog.boids.id,
           Catalog.pendulum.id
         )
@@ -123,6 +125,34 @@ class LabWindowSuite extends LabSuite:
         true
       )))
       assertEquals(LabFx.onFx(window.session.get.live.manifest().interventions.size), 2)
+    }
+  }
+
+  fxTest("a wave preset restarts with its walls painted at step 0, and Reset keeps them") {
+    withWindow(Catalog.wave.id) { window =>
+      LabFx.onFx(window.applyPreset("Double slit"))
+      LabFx.await("preset restarted")(latest(window)(s =>
+        s.param("edge") == 3.0 && s.interventions > 10
+      ))
+      val manifest = LabFx.onFx(window.session.get.live.manifest())
+      assert(manifest.interventions.nonEmpty)
+      assert(manifest.interventions.forall(_.step == 0L), "painting happened after step 0")
+      val painted = manifest.interventions.size
+      LabFx.onFx(window.controls.foreach(_.togglePause()))
+      LabFx.await("paused")(latest(window)(_.paused))
+      // a stroke with the Wall tool is one more intervention; Reset returns to the preset's
+      val box = LabFx.onFx(window.toolBox.get)
+      LabFx.onFx(box.select(Some("Wall")))
+      LabFx.onFx(
+        window.paintables.head
+          .onStroke(physis.fx.StrokeBatch(false, Vector(physis.view.Dab(40.5, 40.5)), true))
+      )
+      // a paused run applies the stroke at the next step
+      LabFx.onFx(window.session.get.live.send(Command.StepOnce))
+      LabFx.await("stroke recorded")(latest(window)(_.interventions == painted + 1))
+      LabFx.onFx(window.session.get.live.send(Command.Reset))
+      LabFx.onFx(window.session.get.live.send(Command.StepOnce))
+      LabFx.await("reset")(latest(window)(s => s.step == 1L && s.interventions == painted))
     }
   }
 
