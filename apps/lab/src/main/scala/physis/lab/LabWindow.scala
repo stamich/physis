@@ -116,7 +116,10 @@ final class LabWindow(
         val result = LabManifests.save(r.session.live, path)
         val text = result match
           case Right(m) =>
-            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, ${m.events.size} parameter changes"
+            val strokes = m.interventions.size
+            val painted = if strokes == 1 then "1 stroke" else s"$strokes strokes"
+            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, " +
+              s"${m.events.size} parameter changes, $painted"
           case Left(error) => error
         status.setText(text)
         result

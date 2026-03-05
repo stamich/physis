@@ -12,19 +12,28 @@ final case class ReplayReport(
     steps: Long,
     time: Double,
     digest: Long,
-    expected: Option[Long]
+    expected: Option[Long],
+    interventions: Int = 0
 ):
   /** Whether the replay reproduced the recorded digest; `None` if the manifest has none. */
   def matches: Option[Boolean] = expected.map(_ == digest)
+
+  /** "1 stroke", "5 strokes", or nothing when the session was not painted. */
+  private def strokes: String = interventions match
+    case 0 => ""
+    case 1 => ", 1 stroke"
+    case n => s", $n strokes"
 
   /** One line for the status bar. */
   def summary: String =
     val d = f"0x$digest%016x"
     matches match
-      case Some(true) => f"Replay of $model: $steps steps to t = $time%.3f, digest $d matches"
+      case Some(true) =>
+        f"Replay of $model: $steps steps to t = $time%.3f$strokes, digest $d matches"
       case Some(false) =>
         f"Replay of $model: digest $d DIFFERS from the recorded 0x${expected.get}%016x"
-      case None => f"Replay of $model: $steps steps to t = $time%.3f, digest $d (none recorded)"
+      case None =>
+        f"Replay of $model: $steps steps to t = $time%.3f$strokes, digest $d (none recorded)"
 
 /** Saving live sessions as manifests and replaying them, without any UI. */
 object LabManifests:
@@ -51,5 +60,6 @@ object LabManifests:
         result.acceptedSteps,
         result.finalTime,
         result.finalDigest,
-        manifest.digest
+        manifest.digest,
+        manifest.interventions.size
       )
