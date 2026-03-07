@@ -20,8 +20,8 @@ for the current platform (Linux, macOS, Windows; x64 and arm64) by the build.
 
 | Area | Contents |
 | --- | --- |
-| Left | model picker, presets, parameter panel, seed field, run controls |
-| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization) |
+| Left | model picker, presets, parameter panel, tool box, seed field, run controls |
+| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude) |
 | Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; the value of the heatmap cell under the pointer; status messages |
 | Menu | File → Save manifest…, Replay manifest…, Close |
 
@@ -52,12 +52,39 @@ a new run with the edited values, and Reset (R) discards them.
 | Pause / resume | Pause / Play | Space |
 | One step (while paused) | Step | Right arrow |
 | Restart from the initial state | Reset | R |
-| Faster / slower (the range depends on the model: 0.01x to 100x for the ODE models, 10 to 4 000 steps/s for Gray–Scott, 0.1x to 20x for Boids) | Speed slider | + / − |
+| Faster / slower (the range depends on the model: 0.01x to 100x for the ODE models, 10 to 4 000 steps/s for Gray–Scott, 0.1x to 20x for Boids, 20 to 2 000 steps/s for Waves) | Speed slider | + / − |
 | Rotate a 3D view | drag | |
 | Zoom | scroll | |
 | Default orientation and zoom | double-click | |
+| Tool on / off (models with tools) | tool box | B |
 
-Shortcuts are ignored while a text field has the focus.
+Shortcuts are ignored while a text field has the focus or a stroke is being dragged.
+
+## Painting
+
+Gray–Scott, Boids and Waves have a **tool box** under the parameters. At first no tool is on and
+the pointer only reads cells. Choosing a tool turns the brush on: a ring follows the pointer and
+shows its radius.
+
+| Model | Tools |
+| --- | --- |
+| Gray–Scott | **Paint v** (sets v to a value; right button erases), **Erase v** |
+| Waves | **Wall** (right button erases), **Erase wall**, **Pulse** (value: amplitude) |
+| Boids | **Disturb** (value: strength) |
+
+The left button applies the tool and dragging paints a line; the right button erases where the
+tool paints. The mouse wheel over the view changes the radius, the slider and the value field do
+the same, B switches the tool off and on again. A drag is cut into dabs at most half a radius
+apart, and the dabs of one frame are sent together. The box shows how many strokes the session
+has recorded. On a periodic grid (Gray–Scott, Boids, Waves with the periodic edge) a stroke
+wraps across the border. Painting works while the run is paused: the strokes are applied at the
+next step.
+
+Every dab is an [intervention](interventions.md), recorded in the manifest, so File → Save
+manifest… and Replay manifest… work with painted sessions; the status line says how many
+parameter changes and strokes were saved or replayed. The presets of Waves paint their walls
+and pulses at step 0 and start a new run; Reset brings them back, painting you added by hand is
+gone.
 
 ## How it runs
 
@@ -75,8 +102,8 @@ the window; the steps/s figure in the statistics shows what it achieves.
 ## Replaying a live session
 
 File → Save manifest… writes the session as a format-2 manifest: model and version, initial
-parameters, stepping, seed, every parameter change as a step-indexed event, the exact number of
-steps and the final state digest. Because the run only ever takes whole steps and changes are
+parameters, stepping, seed, every parameter change and every stroke as a step-indexed event, the
+exact number of steps and the final state digest (format 3 when there are strokes). Because the run only ever takes whole steps and changes are
 applied between steps, the session does not depend on timing: frame rate, pauses and speed
 changes do not enter the manifest.
 

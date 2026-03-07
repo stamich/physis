@@ -11,13 +11,16 @@ models: the Lorenz attractor and the double pendulum. Milestone 0.2 adds **Physi
 ScalaFX desktop app that runs a model live, draws it every frame and lets you change parameters
 while it runs, with sessions that replay bit for bit. Milestone 0.3 adds **fields and agents**:
 2D grids with stencils and boundaries, a cell list for neighbour search, and two models on top of
-them, Gray–Scott reaction–diffusion and Boids, both live in the Lab.
+them, Gray–Scott reaction–diffusion and Boids, both live in the Lab. Milestone 0.4 adds **waves**
+(the damped wave equation with painted walls, a source and absorbing edges) and **interventions**:
+you can paint into a running model with the mouse, and the strokes are recorded in the manifest
+so that a painted session still replays bit for bit.
 
 ## Modules
 
 | Module | Contents |
 | --- | --- |
-| `modules/core` | `Model`, `Stepping`, `Probe`, `Run`, parameter schemas, units, seeded RNG, run manifests and replay |
+| `modules/core` | `Model`, `Stepping`, `Probe`, `Run`, parameter schemas, units, seeded RNG, interventions, run manifests and replay |
 | `modules/ode` | `OdeSystem`, RK4, Dormand–Prince 5(4) with step-size control, velocity Verlet for separable systems |
 | `modules/verify` | convergence order, conservation, determinism and allocation checks |
 | `models/lorenz` | Lorenz system, golden values from a 40-digit reference integration |
@@ -25,6 +28,7 @@ them, Gray–Scott reaction–diffusion and Boids, both live in the Lab.
 | `modules/fields` | `Grid2D`, `Field2D`, boundaries, 5- and 9-point Laplacians, `ParticleSet`, `NeighborGrid` |
 | `models/grayscott` | Gray–Scott reaction–diffusion with Pearson's regimes as presets |
 | `models/boids` | Boids and the Vicsek model on a periodic world |
+| `models/wave` | damped wave equation with walls, a source, reflective, free, periodic and absorbing edges |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -42,7 +46,7 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz, the double pendulum, Gray–Scott and Boids, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids and waves, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
@@ -98,11 +102,16 @@ Every model ships with tests that check the numerics, not only the code:
 - **Fields** — the stencils converge at their order, diffusion decays Fourier modes at the
   analytic rate, and Gray–Scott on 64 × 64 agrees with an independent numpy implementation to
   1e-10 (`tools/gray_scott_reference.py`).
+- **Waves** — the leapfrog scheme keeps the dispersion relation and conserves energy, and 64 × 64
+  agrees with an independent numpy implementation to 1e-10 (`tools/wave_reference.py`); an
+  absorbing edge swallows what a reflective one keeps.
+- **Interventions** — a session with walls, pulses and brush strokes replays to the same digest.
 - **Agents** — the cell list returns exactly the brute-force neighbours, and Boids show the
   Vicsek order–disorder transition (`tools/boids_reference.py`).
 
-See [docs/models](docs/models) for the equations, integrators and checks of each model, and
-[docs/fields.md](docs/fields.md) for grids and agents.
+See [docs/models](docs/models) for the equations, integrators and checks of each model,
+[docs/fields.md](docs/fields.md) for grids and agents, and
+[docs/interventions.md](docs/interventions.md) for painting into a running model.
 
 ## Design rules
 
