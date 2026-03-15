@@ -3,7 +3,7 @@ package physis.models.physarum
 import physis.agents.ParticleSet
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
-import physis.core.param.{ParamSchema, ParamSpec}
+import physis.core.param.{ParamSchema, ParamSpec, Preset}
 import physis.core.random.SplittableRng
 import physis.fields.{Deposit, Field2D, Grid2D, Sampler, TrailOps}
 
@@ -294,3 +294,36 @@ object Physarum extends Model[PhysarumParams]:
     Probe[PhysarumState]("structures")((s, _) => s.structures.toDouble)
 
   val probes: Vector[Probe[PhysarumState]] = Vector(trailMass, coverage, structures)
+
+  val presets: Vector[Preset] = Vector(
+    Preset(
+      "Network",
+      Map(
+        "sensorAngle" -> 0.7,
+        "sensorDist" -> 9.0,
+        "turnAngle" -> 0.6,
+        "decay" -> 0.1
+      ),
+      "Jones' defaults: veins that join into one connected network"
+    ),
+    Preset(
+      "Mesh",
+      Map(
+        "sensorAngle" -> 1.0,
+        "sensorDist" -> 20.0,
+        "turnAngle" -> 0.9,
+        "decay" -> 0.05
+      ),
+      "Long, wide sensors and slow fading: a broad mesh that covers more of the world"
+    ),
+    Preset(
+      "Spots",
+      Map(
+        "sensorAngle" -> 1.5,
+        "sensorDist" -> 3.0,
+        "turnAngle" -> 1.5,
+        "decay" -> 0.1
+      ),
+      "Short, wide sensors and sharp turns: many separate blobs that do not join"
+    )
+  )

@@ -1,0 +1,24 @@
+package physis.models.physarum
+
+import physis.view.{Channel, Colormap, Direction, ValueRange, View}
+
+/** How Physis Lab draws Physarum. Plain data from physis-view; no toolkit. */
+object PhysarumViews:
+  /** The trail, scaled to what is on the grid now. */
+  val trail: View = View.Heatmap("trail", ValueRange.Auto, Colormap.Viridis, "trail")
+
+  /** Channels of the probes in [[Physarum.probes]] order: trail_mass, coverage, structures. */
+  val mass: Channel = Channel.ProbeAt(0, "trail mass")
+  val structures: Channel = Channel.ProbeAt(2, "structures")
+
+  /** Total trail over the last 600 steps (one time unit is one step). */
+  val massPlot: View = View.Plot(Seq(mass), window = 600.0, title = "Trail mass")
+
+  /** Number of connected structures over the last 600 steps. */
+  val structuresPlot: View = View.Plot(Seq(structures), window = 600.0, title = "Structures")
+
+  /** The two plots side by side. */
+  val plots: View = View.Layout(Seq(massPlot, structuresPlot), Direction.Horizontal)
+
+  /** The trail above, the plots below. */
+  val default: View = View.Layout(Seq(trail, plots), Direction.Vertical)
