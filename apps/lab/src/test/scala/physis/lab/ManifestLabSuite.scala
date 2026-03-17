@@ -108,6 +108,39 @@ class LabManifestsSuite extends munit.FunSuite:
     finally live.stop()
   }
 
+  test("food and trail strokes in Physarum replay headless to the same digest") {
+    import physis.core.run.{Disc, Intervention, Op}
+    val live = Catalog.physarum.open(seed = 5L, startPaused = true).live
+    live.start()
+    try
+      def steps(n: Int): Unit = for _ <- 1 to n do live.send(Command.StepOnce)
+      steps(10)
+      live.send(Command.Intervene(Intervention.Brush(
+        "food",
+        Disc(100.0, 100.0, 12.0),
+        Op.Assign,
+        5.0
+      )))
+      steps(20)
+      live.send(Command.SetParams(Map("foodWeight" -> 3.0)))
+      live.send(Command.Intervene(Intervention.Brush(
+        "trail",
+        Disc(30.0, 200.0, 8.0),
+        Op.Add,
+        40.0
+      )))
+      steps(20)
+      awaitSteps(live, 50L)
+      val file = Files.createTempFile("physis-lab-physarum", ".json")
+      val saved = LabManifests.save(live, file).fold(e => fail(e), identity)
+      assertEquals(saved.interventions.size, 2)
+      val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+      assertEquals(report.steps, 50L)
+      assertEquals(report.matches, Some(true), report.summary)
+      Files.delete(file)
+    finally live.stop()
+  }
+
   test("a stroke in Gray-Scott replays to the same digest") {
     import physis.core.run.{Disc, Intervention, Op}
     val live = Catalog.grayScott.open(seed = 4L, startPaused = true).live

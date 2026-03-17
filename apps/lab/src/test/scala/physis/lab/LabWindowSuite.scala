@@ -17,6 +17,25 @@ class CatalogSuite extends munit.FunSuite:
       assertEquals(session.schema.names.toSet, session.initial.keySet)
   }
 
+  test("Physarum offers food and trail tools whose strokes the model accepts") {
+    import physis.core.run.{Intervention, Physis}
+    import physis.models.physarum.Physarum
+    assertEquals(
+      Catalog.physarum.tools.map(_.spec.name),
+      Vector("Paint food", "Erase food", "Paint trail")
+    )
+    assert(Catalog.physarum.wraps(Map.empty))
+    val run = Physis
+      .model(Physarum)
+      .stepping(Physarum.stepping)
+      .overrides(Map("n" -> 50.0, "nx" -> 64.0, "ny" -> 64.0))
+      .build()
+    for tool <- Catalog.physarum.tools; secondary <- Seq(false, true) do
+      val iv = tool.make(physis.view.Dab(10.0, 12.0), 5.0, 3.0, secondary)
+      assert(run.intervene(iv).isRight, s"${tool.spec.name}: $iv")
+      assert(iv.isInstanceOf[Intervention.Brush])
+  }
+
   test("the Lorenz view stacks the attractor above the coordinates") {
     Catalog.lorenz.open(1L, startPaused = true).view match
       case View.Layout(Seq(_: View.Trajectory, _: View.Plot), Direction.Vertical) => ()
@@ -54,6 +73,7 @@ class LabWindowSuite extends LabSuite:
           Catalog.grayScott.id,
           Catalog.wave.id,
           Catalog.boids.id,
+          Catalog.physarum.id,
           Catalog.pendulum.id
         )
       do

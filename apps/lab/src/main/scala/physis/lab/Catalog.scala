@@ -9,6 +9,7 @@ import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
 import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
+import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
 import physis.view.{Dab, View}
@@ -256,9 +257,48 @@ object Catalog:
     seeded = false
   )
 
+  /** One step is one time unit, so the speed is the number of steps per second. */
+  val physarum: LabModel = new ModelEntry[PhysarumParams, PhysarumState](
+    "Physarum",
+    Physarum,
+    Physarum.stepping,
+    Physarum.probes,
+    PhysarumViews.default,
+    PhysarumState.stateExport,
+    Physarum.presets,
+    SpeedRange(5.0, 600.0, 60.0, s => f"$s%.0f steps/s"),
+    tools = Vector(
+      LabTool(
+        ToolSpec("Paint food", Some("food"), 5.0, (0.1, 20.0), (1.0, 64.0), 8.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush(
+            "food",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            v
+          )
+      ),
+      LabTool(
+        ToolSpec("Erase food", None, 0.0, (0.0, 0.0), (1.0, 64.0), 10.0),
+        (d, r, _, _) => Intervention.Brush("food", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      ),
+      LabTool(
+        ToolSpec("Paint trail", Some("trail"), 20.0, (1.0, 200.0), (1.0, 64.0), 6.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush(
+            "trail",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Add,
+            v
+          )
+      )
+    ),
+    wrap = _ => true
+  )
+
   /** In menu order; the first one opens at start. */
-  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave)
+  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave, physarum)
 
   /** Models by id, for replaying manifests. */
   val registry: ModelRegistry =
-    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave)
+    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave, Physarum)
