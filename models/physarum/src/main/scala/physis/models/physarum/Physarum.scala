@@ -5,7 +5,8 @@ import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec, Preset}
 import physis.core.random.SplittableRng
-import physis.fields.{Deposit, Field2D, Grid2D, Sampler, TrailOps}
+import physis.core.run.{Disc, Intervention, Op}
+import physis.fields.{Brush, Deposit, Field2D, Grid2D, Pulse, Sampler, TrailOps}
 
 /**
  * Parameters of the Physarum model.
@@ -152,6 +153,16 @@ final class PhysarumState(val n: Int, val grid: Grid2D, val noiseKey: Long):
   /** Total trail. */
   def mass: Double = now.sum
 
+  private def fieldNamed(target: String): Field2D = if target == "food" then food else now
+
+  /** Paints food or trail on the periodic grid; the field never goes below zero. */
+  def applyBrush(target: String, disc: Disc, op: Op, value: Double): Unit =
+    val _ = Brush(fieldNamed(target), disc, true, true, op, value, lo = 0.0)
+
+  /** Adds a Gaussian bump of food or trail. */
+  def applyPulse(target: String, x: Double, y: Double, sigma: Double, amplitude: Double): Unit =
+    val _ = Pulse.stamp(fieldNamed(target), x, y, sigma, amplitude, true, true)
+
   private var covered = 0
   private var components = 0
 
@@ -282,6 +293,37 @@ object Physarum extends Model[PhysarumParams]:
     ctx.suggestedNext = dt
 
   def digest(state: PhysarumState): Long = state.digest
+
+  override def accepts(iv: Intervention): Either[String, Unit] = iv match
+    case Intervention.Brush("food" | "trail", _, _, _) => Right(())
+    case Intervention.Pulse("food" | "trail", _, _, _, amplitude) =>
+      if amplitude >= 0.0 then Right(())
+      else Left(s"pulse amplitude must not be negative (a field stays at or above 0): $amplitude")
+    case Intervention.Brush(target, _, _, _) =>
+      Left(s"physarum has no field '$target' to paint (use 'food' or 'trail')")
+    case Intervention.Pulse(target, _, _, _, _) =>
+      Left(s"physarum has no field '$target' to pulse (use 'food' or 'trail')")
+    case _: Intervention.Disturb =>
+      Left("physarum agents are not disturbed; paint 'food' or 'trail' instead")
+
+  /**
+   * Brush paints food or trail (set, add or erase; results are kept at or above zero) and Pulse
+   * adds a non-negative Gaussian bump to either. Both use the periodic grid and no random
+   * numbers, so painted sessions replay exactly.
+   */
+  override def intervene(
+      state: PhysarumState,
+      p: PhysarumParams,
+      iv: Intervention
+  ): Either[String, Unit] =
+    accepts(iv).map { _ =>
+      iv match
+        case Intervention.Brush(target, disc, op, value) =>
+          state.applyBrush(target, disc, op, value)
+        case Intervention.Pulse(target, x, y, sigma, amplitude) =>
+          state.applyPulse(target, x, y, sigma, amplitude)
+        case _ => ()
+    }
 
   /** Total trail. */
   val trailMass: Probe[PhysarumState] = Probe[PhysarumState]("trail_mass")((s, _) => s.mass)
