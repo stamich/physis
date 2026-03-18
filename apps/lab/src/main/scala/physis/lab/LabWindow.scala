@@ -354,6 +354,9 @@ object LabWindow:
     case v: View.Heatmap =>
       val r = new HeatmapRenderer(v)
       (r.node, Seq(r))
+    case View.Layers(base, dots) =>
+      val r = new HeatmapRenderer(base, dots = Some(dots))
+      (r.node, Seq(r))
     case v: View.Particles =>
       val r = new ParticlesRenderer(v)
       (r.node, Seq(r))

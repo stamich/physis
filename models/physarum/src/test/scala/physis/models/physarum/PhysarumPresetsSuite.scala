@@ -54,10 +54,14 @@ class PhysarumPresetsSuite extends munit.FunSuite:
   test("the default view is the trail over two plots, whose channels are the right probes") {
     PhysarumViews.default match
       case View.Layout(
-            Seq(heat: View.Heatmap, View.Layout(Seq(View.Plot(m, _, _), View.Plot(s, _, _)), _)),
+            Seq(
+              View.Layers(heat, dots),
+              View.Layout(Seq(View.Plot(m, _, _), View.Plot(s, _, _)), _)
+            ),
             Direction.Vertical
           ) =>
         assertEquals(heat.slice, "trail")
+        assertEquals((dots.x, dots.y), ("x", "y"))
         assertEquals(m, Seq(PhysarumViews.mass))
         assertEquals(s, Seq(PhysarumViews.structures))
       case other => fail(s"unexpected view $other")

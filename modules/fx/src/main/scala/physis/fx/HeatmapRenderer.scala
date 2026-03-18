@@ -13,7 +13,7 @@ import javafx.scene.shape.Circle
 import javafx.util.Callback
 
 import physis.core.live.Snapshot
-import physis.view.{HeatmapRaster, StrokePlanner, View}
+import physis.view.{Dots, HeatmapRaster, StrokePlanner, View}
 
 /**
  * Draws a [[View.Heatmap]]: one slice of the snapshot as an image with one pixel per cell, a
@@ -23,6 +23,8 @@ import physis.view.{HeatmapRaster, StrokePlanner, View}
  * so a frame is one pass over the cells and one buffer update. When a `PixelBuffer` cannot be
  * created, or `usePixelBuffer` is false, the same pixels go through `PixelWriter.setPixels`.
  * The image keeps the aspect ratio of the grid and is not smoothed: a cell stays a square.
+ *
+ * With `dots` (a [[View.Layers]]) the agents are mixed into their cells after the overlay.
  *
  * With an `overlay` slice in the view, a second pass over the same pixel array paints the cells
  * of that slice that are 1 or more in flat grey (walls), so both pixel paths show the same
@@ -36,7 +38,11 @@ import physis.view.{HeatmapRaster, StrokePlanner, View}
  * dab means is up to the receiver. A ring under the pointer shows the brush; it is a separate
  * node over the image, never part of the pixels.
  */
-final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) extends Renderer
+final class HeatmapRenderer(
+    view: View.Heatmap,
+    usePixelBuffer: Boolean = true,
+    dots: Option[Dots] = None
+) extends Renderer
     with Paintable:
   import HeatmapRenderer.*
 
@@ -224,6 +230,24 @@ final class HeatmapRenderer(view: View.Heatmap, usePixelBuffer: Boolean = true) 
             case Some(mask) if mask.width == nx && mask.height == ny =>
               HeatmapRaster.overlay(s.state, mask.offset, nx, ny, pixels)
             case _ => ()
+        }
+        dots.foreach { d =>
+          for
+            xs <- s.slice(d.x)
+            ys <- s.slice(d.y)
+          do
+            HeatmapRaster.dots(
+              s.state,
+              xs.offset,
+              s.state,
+              ys.offset,
+              math.min(xs.length, ys.length),
+              nx,
+              ny,
+              d.color,
+              d.opacity,
+              pixels
+            )
         }
         fresh = true
 

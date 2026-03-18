@@ -29,7 +29,7 @@ object FrameImage:
    * The picture of `view` in `s`, or `None` when the snapshot has no such slice. An overlay
    * slice of another size is ignored.
    */
-  def heatmap(s: Snapshot, view: View.Heatmap): Option[Frame] =
+  def heatmap(s: Snapshot, view: View.Heatmap, dots: Option[Dots] = None): Option[Frame] =
     s.slice(view.slice).map { slice =>
       val n = slice.width * slice.height
       val values = new Array[Double](n)
@@ -52,8 +52,30 @@ object FrameImage:
             HeatmapRaster.overlay(s.state, mask.offset, slice.width, slice.height, pixels)
           case _ => ()
       }
+      dots.foreach { d =>
+        for
+          xs <- s.slice(d.x)
+          ys <- s.slice(d.y)
+        do
+          HeatmapRaster.dots(
+            s.state,
+            xs.offset,
+            s.state,
+            ys.offset,
+            math.min(xs.length, ys.length),
+            slice.width,
+            slice.height,
+            d.color,
+            d.opacity,
+            pixels
+          )
+      }
       new Frame(slice.width, slice.height, pixels, lo, hi)
     }
+
+  /** The picture of the heatmap of `view` with its dots. */
+  def layers(s: Snapshot, view: View.Layers): Option[Frame] =
+    heatmap(s, view.base, Some(view.dots))
 
   /**
    * `frame` with a colour scale to its right: the first colour of `colormap` at the bottom, the

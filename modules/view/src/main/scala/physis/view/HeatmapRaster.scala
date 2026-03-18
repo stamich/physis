@@ -72,3 +72,45 @@ object HeatmapRaster:
     while k < n do
       if mask(offset + k) >= 1.0 then out(k) = OverlayGrey
       k += 1
+
+  /**
+   * Mixes a dot of `color` into the cell of each of `count` agents whose positions (cell
+   * coordinates, `xs` from `xOffset` and `ys` from `yOffset`) are given. A position outside the
+   * grid wraps; NaN positions are skipped. A cell with several agents is mixed once per agent,
+   * in agent order. Opaque result: the alpha of the cell is set to 255.
+   *
+   * @param opacity share of `color` that goes into the cell, 0 to 255
+   * @param out     the `nx * ny` pixels of the field
+   */
+  def dots(
+      xs: Array[Double],
+      xOffset: Int,
+      ys: Array[Double],
+      yOffset: Int,
+      count: Int,
+      nx: Int,
+      ny: Int,
+      color: Int,
+      opacity: Int,
+      out: Array[Int]
+  ): Unit =
+    val inv = 255 - opacity
+    val sr = (color >>> 16) & 0xff
+    val sg = (color >>> 8) & 0xff
+    val sb = color & 0xff
+    var k = 0
+    while k < count do
+      val x = xs(xOffset + k)
+      val y = ys(yOffset + k)
+      if x == x && y == y && !x.isInfinite && !y.isInfinite then
+        val wx = x - nx * math.floor(x / nx)
+        val wy = y - ny * math.floor(y / ny)
+        val cx = math.min(nx - 1, wx.toInt)
+        val cy = math.min(ny - 1, wy.toInt)
+        val at = cy * nx + cx
+        val dst = out(at)
+        val r = (((dst >>> 16) & 0xff) * inv + sr * opacity + 127) / 255
+        val g = (((dst >>> 8) & 0xff) * inv + sg * opacity + 127) / 255
+        val b = ((dst & 0xff) * inv + sb * opacity + 127) / 255
+        out(at) = 0xff000000 | (r << 16) | (g << 8) | b
+      k += 1
