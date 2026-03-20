@@ -38,7 +38,7 @@ import physis.fx.{
   ToolBox,
   TrajectoryRenderer
 }
-import physis.view.{Direction, View}
+import physis.view.{Direction, Frame, FrameImage, Png, View}
 
 /**
  * The Physis Lab window contents: model picker, parameter panel and run controls on the left,
@@ -88,11 +88,16 @@ final class LabWindow(
   private def menu(): MenuBar =
     val save = new MenuItem("Save manifest…")
     save.setOnAction(_ => chooseAndSave())
+    val image = new Menu("Save image")
+    for factor <- LabWindow.ImageScales do
+      val item = new MenuItem(s"$factor×")
+      item.setOnAction(_ => chooseAndSaveImage(factor))
+      image.getItems.add(item)
     val replay = new MenuItem("Replay manifest…")
     replay.setOnAction(_ => chooseAndReplay())
     val quit = new MenuItem("Close")
     quit.setOnAction(_ => Option(root.getScene).map(_.getWindow).foreach(_.hide()))
-    new MenuBar(new Menu("File", null, save, replay, quit))
+    new MenuBar(new Menu("File", null, save, image, replay, quit))
 
   private def chooser(): FileChooser =
     val c = new FileChooser()
@@ -104,6 +109,13 @@ final class LabWindow(
       val c = chooser()
       c.setInitialFileName(s"${r.session.model.id}-session.json")
       Option(c.showSaveDialog(root.getScene.getWindow)).foreach(f => saveManifest(f.toPath))
+
+  private def chooseAndSaveImage(factor: Int): Unit =
+    for r <- running do
+      val c = new FileChooser()
+      c.getExtensionFilters.add(new FileChooser.ExtensionFilter("PNG image", "*.png"))
+      c.setInitialFileName(s"${r.session.model.id}.png")
+      Option(c.showSaveDialog(root.getScene.getWindow)).foreach(f => saveImage(f.toPath, factor))
 
   private def chooseAndReplay(): Unit =
     Option(chooser().showOpenDialog(root.getScene.getWindow)).foreach(f => replayManifest(f.toPath))
@@ -123,6 +135,35 @@ final class LabWindow(
           case Left(error) => error
         status.setText(text)
         result
+
+  /**
+   * Saves the first image of the current view (the field as drawn, with its colour scale on the
+   * right and no text) to `path` as a PNG, each cell `factor` pixels wide. The status line says
+   * where it went and which values the colours stand for. Call it on the FX thread.
+   */
+  def saveImage(path: Path, factor: Int): Either[String, String] =
+    val result: Either[String, String] =
+      if factor < 1 || factor > LabWindow.MaxImageScale then
+        Left(s"image scale must be 1 to ${LabWindow.MaxImageScale}, got $factor")
+      else
+        heatmaps.headOption match
+          case None => Left("this model has no image to save")
+          case Some(h) =>
+            val (nx, ny) = h.gridSize
+            if nx == 0 then Left("nothing has been drawn yet")
+            else
+              val (lo, hi) = h.range
+              val picture = new Frame(nx, ny, h.lastPixels.clone(), lo, hi)
+              val frame = FrameImage.withColorBar(picture, h.colormap)
+              try
+                Png.write(path, frame.pixels, frame.width, frame.height, factor)
+                Right(
+                  f"Saved ${path.getFileName}: ${frame.width * factor} x ${frame.height * factor}" +
+                    f" px, colours from $lo%.4g (bottom) to $hi%.4g (top)"
+                )
+              catch case e: java.io.IOException => Left(s"Could not save $path: ${e.getMessage}")
+    status.setText(result.merge)
+    result
 
   /**
    * Replays the manifest at `path` on a background thread; the outcome appears in the status line
@@ -330,6 +371,12 @@ final class LabWindow(
     f"#${(c.getRed * 255).round}%02x${(c.getGreen * 255).round}%02x${(c.getBlue * 255).round}%02x"
 
 object LabWindow:
+  /** The enlargements offered for saved images. */
+  val ImageScales: Seq[Int] = Seq(1, 2, 4, 8)
+
+  /** The largest enlargement of a saved image. */
+  val MaxImageScale: Int = 8
+
   private final case class Running(
       session: LabSession,
       loop: RenderLoop,

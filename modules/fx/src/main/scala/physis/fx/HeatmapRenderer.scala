@@ -13,7 +13,7 @@ import javafx.scene.shape.Circle
 import javafx.util.Callback
 
 import physis.core.live.Snapshot
-import physis.view.{Dots, HeatmapRaster, StrokePlanner, View}
+import physis.view.{Colormap, Dots, HeatmapRaster, StrokePlanner, View}
 
 /**
  * Draws a [[View.Heatmap]]: one slice of the snapshot as an image with one pixel per cell, a
@@ -200,6 +200,9 @@ final class HeatmapRenderer(
 
   /** The colours of the last frame, packed ARGB, row 0 first; valid until the next frame. */
   def lastPixels: Array[Int] = pixels
+
+  /** The colours of the value scale of this view. */
+  def colormap: Colormap = view.colormap
 
   /** The value range of the last frame. */
   def range: (Double, Double) = (lo, hi)

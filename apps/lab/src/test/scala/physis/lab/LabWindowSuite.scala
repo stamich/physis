@@ -209,6 +209,44 @@ class LabWindowSuite extends LabSuite:
     }
   }
 
+  fxTest("Save image writes the field as the Lab draws it, with a colour scale and no text") {
+    withWindow(Catalog.grayScott.id) { window =>
+      LabFx.await("frames")(latest(window)(_.step > 100))
+      val file = java.nio.file.Files.createTempFile("physis-lab-image", ".png")
+      try
+        val (pixels, size, range, result) = LabFx.onFx {
+          val h = window.heatmaps.head
+          (h.lastPixels.clone(), h.gridSize, h.range, window.saveImage(file, 2))
+        }
+        val (nx, ny) = size
+        assert(result.exists(_.contains(file.getFileName.toString)), result.toString)
+        assertEquals(LabFx.onFx(window.status.getText), result.fold(identity, identity))
+        val image = javax.imageio.ImageIO.read(file.toFile)
+        assertEquals(image.getHeight, ny * 2)
+        assert(image.getWidth > nx * 2, s"no colour scale: ${image.getWidth} wide")
+        for y <- 0 until ny * 2; x <- 0 until nx * 2 do
+          assertEquals(image.getRGB(x, y), pixels((y / 2) * nx + x / 2) | 0xff000000, s"($x, $y)")
+        assert(result.exists(_.contains("colours from")), result.toString)
+        assert(range._1 < range._2 || range._1 == range._2)
+        assert(LabFx.onFx(window.saveImage(file, 0)).isLeft)
+        assert(LabFx.onFx(window.saveImage(file, 9)).isLeft)
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("Save image says so when the view has no image") {
+    withWindow(Catalog.lorenz.id) { window =>
+      val file = java.nio.file.Files.createTempFile("physis-lab-image", ".png")
+      try
+        val result = LabFx.onFx(window.saveImage(file, 1))
+        assertEquals(result, Left("this model has no image to save"))
+        assertEquals(LabFx.onFx(window.status.getText), "this model has no image to save")
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
+    }
+  }
+
   fxTest("pointing at a heatmap cell shows its value in the bottom bar") {
     withWindow(Catalog.grayScott.id) { window =>
       LabFx.await("frames")(latest(window)(_.step > 100))
