@@ -5,12 +5,17 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 
 import physis.core.{Model, Probe, Stepping}
-import physis.core.run.{Manifest, Physis}
-import physis.models.boids.{Boids, BoidsParams, BoidsState}
-import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState}
+import physis.core.live.StateExport
+import physis.core.run.{InterventionEvent, Manifest, ParamEvent, Physis, Run}
+import physis.core.sweep.{ParamGrid, Sweep, SweepOutput, SweepSetup}
+import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
+import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams}
 import physis.models.pendulum.{Pendulum, PendulumParams}
+import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
+import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
+import physis.view.{Frames, View}
 
 /**
  * Runs a model without a UI and prints its probes as CSV.
@@ -21,25 +26,49 @@ import physis.ode.OdeState
  * ./gradlew :examples:run --args="--replay run.json"
  * ./gradlew :examples:run --args="--model gray-scott --param nx=64 --param ny=64 --until 3000 --sample-every 500"
  * ./gradlew :examples:run --args="--model boids --param n=500 --until 10 --sample-every 1"
+ * ./gradlew :examples:run --args="--list"
+ * ./gradlew :examples:run --args="--model physarum --steps 600 --frames out --every 60 --scale 3"
+ * ./gradlew :examples:run --args="--model gray-scott --until 2000 --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5"
  * }}}
  *
  * A summary with the final state digest goes to standard error; a replay of a manifest prints
- * the same CSV and the same digest.
+ * the same CSV and the same digest, and a manifest with parameter changes and strokes is replayed
+ * with them. `--frames` writes numbered PNGs of the first image of the model's view; `--sweep`
+ * runs the product of the given axes (see `ParamGrid`) on all cores, in grid order whatever the
+ * number of threads, and prints a CSV with one row per point.
  */
 object RunHeadless:
 
   val Usage: String =
     """Usage: RunHeadless [options]
-      |  --model <id>           lorenz | double-pendulum | gray-scott | boids (default: lorenz)
+      |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum
+      |                         (default: lorenz)
+      |  --list                 list the models with their parameters and exit
       |  --param <name=value>   override a model parameter (repeatable)
       |  --until <t>            end time (default: 10)
+      |  --steps <n>            run n steps instead of up to a time (fixed steps only)
       |  --sample-every <dt>    probe sampling interval (default: 0.1)
       |  --dt <dt>              fixed step (default: the model's own: 0.001 for the ODE models,
-      |                         1 for gray-scott, 1/60 for boids)
+      |                         1 for gray-scott and physarum, 0.5 for wave, 1/60 for boids)
       |  --adaptive <tol>       Dormand-Prince with rtol = atol = tol instead of fixed steps
       |  --seed <n>             run seed (default: 0)
       |  --manifest <path>      write the run manifest to <path>
-      |  --replay <path>        re-run the manifest at <path>; other options are ignored
+      |  --replay <path>        re-run the manifest at <path>, with its parameter changes and
+      |                         strokes; other options are ignored except --frames
+      |
+      |Frames (gray-scott, wave, physarum): numbered PNGs of the first image of the view
+      |  --frames <dir>         write the frames into <dir> instead of printing a CSV
+      |  --every <n>            steps between frames (default: a tenth of the run)
+      |  --scale <n>            pixels per cell, 1 to 16 (default: 1)
+      |  --no-color-bar         leave out the colour scale at the right
+      |  --compress             deflate the PNG data (smaller files, same pixels)
+      |
+      |Sweeps: the product of the axes, one run per point, results in grid order
+      |  --sweep <axis>         name=a:b:n | name=log:a:b:n | name=a,b,c | seed=a..b (repeatable)
+      |  --threads <n>          runs at the same time (default: one per processor)
+      |  --out <path>           write the CSV to <path> instead of standard output
+      |  --jsonl <path>         also write one JSON object per point
+      |  --manifests <dir>      also write point-NNNN.json, a manifest per point that replays
       |  --help                 show this help""".stripMargin
 
   final case class Options(
@@ -52,7 +81,21 @@ object RunHeadless:
       seed: Long = 0L,
       manifest: Option[Path] = None,
       replay: Option[Path] = None,
-      exactStepping: Option[Stepping] = None
+      exactStepping: Option[Stepping] = None,
+      list: Boolean = false,
+      steps: Option[Long] = None,
+      events: Vector[ParamEvent] = Vector.empty,
+      interventions: Vector[InterventionEvent] = Vector.empty,
+      frames: Option[Path] = None,
+      every: Option[Long] = None,
+      scale: Int = 1,
+      colorBar: Boolean = true,
+      compress: Boolean = false,
+      sweep: Vector[String] = Vector.empty,
+      threads: Option[Int] = None,
+      out: Option[Path] = None,
+      jsonl: Option[Path] = None,
+      manifests: Option[Path] = None
   ):
     /**
      * Stepping from a manifest when replaying, otherwise from --adaptive or --dt, otherwise the
@@ -69,8 +112,12 @@ object RunHeadless:
   private final case class Entry[P, S](
       model: Model.Aux[P, S],
       probes: P => Vector[Probe[S]],
-      stepping: Stepping
+      stepping: Stepping,
+      image: Option[Image[S]] = None
   )
+
+  /** What frames need of a model: how its state is exported and what its view is. */
+  private final case class Image[S](exporter: StateExport[S], view: View)
 
   private val ode: Stepping = Stepping.Fixed(0.001)
 
@@ -80,9 +127,27 @@ object RunHeadless:
     GrayScott.id -> Entry[GrayScottParams, GrayScottState](
       GrayScott,
       _ => GrayScott.probes,
-      GrayScott.stepping
+      GrayScott.stepping,
+      Some(Image(GrayScottState.stateExport, GrayScottViews.default))
     ),
-    Boids.id -> Entry[BoidsParams, BoidsState](Boids, _ => Boids.probes, Boids.stepping)
+    Boids.id -> Entry[BoidsParams, BoidsState](
+      Boids,
+      _ => Boids.probes,
+      Boids.stepping,
+      Some(Image(BoidsState.stateExport, BoidsViews.default))
+    ),
+    Wave.id -> Entry[WaveParams, WaveState](
+      Wave,
+      _ => Wave.probes,
+      Wave.stepping,
+      Some(Image(WaveState.stateExport, WaveViews.default))
+    ),
+    Physarum.id -> Entry[PhysarumParams, PhysarumState](
+      Physarum,
+      _ => Physarum.probes,
+      Physarum.stepping,
+      Some(Image(PhysarumState.stateExport, PhysarumViews.default))
+    )
   )
 
   def main(args: Array[String]): Unit =
@@ -102,6 +167,9 @@ object RunHeadless:
     args match
       case Nil => Right(options)
       case "--help" :: _ => Left("help")
+      case "--list" :: rest => parse(rest, options.copy(list = true))
+      case "--no-color-bar" :: rest => parse(rest, options.copy(colorBar = false))
+      case "--compress" :: rest => parse(rest, options.copy(compress = true))
       case "--model" :: id :: rest => parse(rest, options.copy(model = id))
       case "--param" :: assignment :: rest =>
         assignment.split("=", 2) match
@@ -121,6 +189,20 @@ object RunHeadless:
       case "--seed" :: v :: rest =>
         v.toLongOption.toRight(s"--seed expects an integer, got '$v'")
           .flatMap(s => parse(rest, options.copy(seed = s)))
+      case "--steps" :: v :: rest =>
+        whole(v, "--steps", 0L).flatMap(n => parse(rest, options.copy(steps = Some(n))))
+      case "--every" :: v :: rest =>
+        whole(v, "--every", 1L).flatMap(n => parse(rest, options.copy(every = Some(n))))
+      case "--scale" :: v :: rest =>
+        whole(v, "--scale", 1L).flatMap(n => parse(rest, options.copy(scale = n.toInt)))
+      case "--threads" :: v :: rest =>
+        whole(v, "--threads", 1L).flatMap(n => parse(rest, options.copy(threads = Some(n.toInt))))
+      case "--frames" :: path :: rest => parse(rest, options.copy(frames = Some(Path.of(path))))
+      case "--sweep" :: axis :: rest => parse(rest, options.copy(sweep = options.sweep :+ axis))
+      case "--out" :: path :: rest => parse(rest, options.copy(out = Some(Path.of(path))))
+      case "--jsonl" :: path :: rest => parse(rest, options.copy(jsonl = Some(Path.of(path))))
+      case "--manifests" :: path :: rest =>
+        parse(rest, options.copy(manifests = Some(Path.of(path))))
       case "--manifest" :: path :: rest => parse(rest, options.copy(manifest = Some(Path.of(path))))
       case "--replay" :: path :: rest => parse(rest, options.copy(replay = Some(Path.of(path))))
       case option :: Nil if option.startsWith("--") => Left(s"$option expects a value")
@@ -129,15 +211,15 @@ object RunHeadless:
   /** Runs with `options`, writing CSV to `out` and a summary to `err`; returns the exit code. */
   def run(options: Options, out: PrintStream, err: PrintStream): Int =
     val resolved = options.replay match
-      case Some(path) => fromManifest(path)
+      case Some(path) => fromManifest(path, options)
       case None => Right(options)
     resolved.flatMap(o => execute(o, out, err)) match
-      case Right(()) => 0
+      case Right(code) => code
       case Left(error) =>
         err.println(s"error: $error")
         1
 
-  private def fromManifest(path: Path): Either[String, Options] =
+  private def fromManifest(path: Path, options: Options): Either[String, Options] =
     val text =
       try Right(Files.readString(path, StandardCharsets.UTF_8))
       catch case e: java.io.IOException => Left(s"cannot read $path: ${e.getMessage}")
@@ -156,51 +238,174 @@ object RunHeadless:
               until = m.until,
               sampleEvery = m.sampleEvery,
               seed = m.seed,
-              exactStepping = Some(m.stepping)
+              exactStepping = Some(m.stepping),
+              steps = m.steps,
+              events = m.events,
+              interventions = m.interventions,
+              frames = options.frames,
+              every = options.every,
+              scale = options.scale,
+              colorBar = options.colorBar,
+              compress = options.compress
             )
           )
     }
 
-  private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Unit] =
-    catalog.get(o.model) match
-      case None =>
-        Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
-      case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any, Any]], o, out, err)
+  private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Int] =
+    if o.list then
+      listModels(out)
+      Right(0)
+    else
+      catalog.get(o.model) match
+        case None =>
+          Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
+        case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any, Any]], o, out, err)
+
+  private def listModels(out: PrintStream): Unit =
+    for (id, entry) <- catalog.toList.sortBy(_._1) do
+      out.println(s"$id (version ${entry.model.version})")
+      for p <- entry.model.params.specs do
+        val restart = if p.restart then ", needs a restart" else ""
+        val doc = if p.doc.isEmpty then "" else s" - ${p.doc}"
+        out.println(s"  ${p.name} = ${p.default} [${p.min}, ${p.max}] ${p.unit}$restart$doc")
 
   private def executeEntry(
       entry: Entry[Any, Any],
       o: Options,
       out: PrintStream,
       err: PrintStream
-  ): Either[String, Unit] =
+  ): Either[String, Int] =
     val schema = entry.model.params
     schema.withOverrides(schema.defaults, o.params).flatMap { p =>
       try
-        val run = Physis
-          .model(entry.model)
-          .withParams(p)
-          .stepping(o.steppingFor(entry.stepping))
-          .seed(o.seed)
-          .sampleEvery(o.sampleEvery)
-          .probe(entry.probes(p)*)
-          .build()
-        o.manifest.foreach { path =>
-          Files.writeString(path, Manifest.toJson(run.manifest(o.until)), StandardCharsets.UTF_8)
-        }
-        val result = run.runUntil(o.until)
-        val names = result.series.keys.toVector
-        out.println(("t" +: names).mkString(","))
-        result.times.indices.foreach { i =>
-          val row = result.times(i) +: names.map(name => result.series(name)(i))
-          out.println(row.map(d => java.lang.Double.toString(d)).mkString(","))
-        }
-        err.println(
-          f"# model ${o.model}, t = ${result.finalTime}%s, accepted ${result.acceptedSteps}%d, " +
-            f"rejected ${result.rejectedSteps}%d, final digest ${result.finalDigest}%016x"
-        )
-        Right(())
+        if o.sweep.nonEmpty then sweep(entry, o, out, err)
+        else
+          o.frames match
+            case Some(dir) => frames(entry, o, p, dir, out, err)
+            case None => runAndPrint(entry, o, p, out, err)
       catch case e: IllegalArgumentException => Left(e.getMessage)
+    }
+
+  private def build(entry: Entry[Any, Any], o: Options, p: Any, probes: Boolean): Run[Any, Any] =
+    Physis
+      .model(entry.model)
+      .withParams(p)
+      .stepping(o.steppingFor(entry.stepping))
+      .seed(o.seed)
+      .sampleEvery(o.sampleEvery)
+      .events(o.events)
+      .interventions(o.interventions)
+      .probe((if probes then entry.probes(p) else Vector.empty)*)
+      .build()
+
+  private def runAndPrint(
+      entry: Entry[Any, Any],
+      o: Options,
+      p: Any,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    val run = build(entry, o, p, probes = true)
+    o.manifest.foreach { path =>
+      val m = run.manifest(o.until)
+      Files.writeString(path, Manifest.toJson(m.copy(steps = o.steps)), StandardCharsets.UTF_8)
+    }
+    val result = o.steps match
+      case Some(n) => run.runSteps(n)
+      case None => run.runUntil(o.until)
+    val names = result.series.keys.toVector
+    out.println(("t" +: names).mkString(","))
+    result.times.indices.foreach { i =>
+      val row = result.times(i) +: names.map(name => result.series(name)(i))
+      out.println(row.map(d => java.lang.Double.toString(d)).mkString(","))
+    }
+    err.println(
+      f"# model ${o.model}, t = ${result.finalTime}%s, accepted ${result.acceptedSteps}%d, " +
+        f"rejected ${result.rejectedSteps}%d, final digest ${result.finalDigest}%016x"
+    )
+    Right(0)
+
+  /** Numbered PNGs of the model's view, printed one path per line. */
+  private def frames(
+      entry: Entry[Any, Any],
+      o: Options,
+      p: Any,
+      dir: Path,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    entry.image.toRight(s"model '${o.model}' has no image to export").flatMap { image =>
+      val fixed: Either[String, Double] = o.steppingFor(entry.stepping) match
+        case Stepping.Fixed(dt) => Right(dt)
+        case _ => Left("frames need fixed steps")
+      fixed.flatMap { dt =>
+        val run = build(entry, o, p, probes = false)
+        val steps = o.steps.getOrElse(math.round(o.until / dt))
+        val options = Frames.Options(
+          o.every.getOrElse(math.max(1L, steps / 10)),
+          o.scale,
+          o.colorBar,
+          o.compress
+        )
+        Frames.render(run, steps, image.exporter, image.view, dir, options).map { files =>
+          files.foreach(f => out.println(f.toString))
+          val last = Frames.frame(Frames.snapshot(run, image.exporter), image.view, options)
+          val range = last.fold("")(f => s", colours of the last frame from ${f.lo} to ${f.hi}")
+          err.println(s"# ${files.size} frames of ${o.model} in $dir, $steps steps$range")
+          0
+        }
+      }
+    }
+
+  /** The product of the axes as a CSV, in grid order; exit code 1 when a point failed. */
+  private def sweep(
+      entry: Entry[Any, Any],
+      o: Options,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    ParamGrid.parse(o.sweep, entry.model.params).flatMap { grid =>
+      val setup = SweepSetup[Any, Any](
+        entry.model,
+        entry.probes,
+        o.steppingFor(entry.stepping),
+        o.until,
+        if o.until > 0.0 then o.until else 1.0,
+        o.params,
+        o.seed
+      )
+      val threads = o.threads.getOrElse(Sweep.defaultThreads)
+      val results = Sweep.run(setup, grid, threads) { (run, _) =>
+        if o.manifests.isDefined then Manifest.toJson(run.manifest(o.until)) else ""
+      }
+      try
+        val csv = SweepOutput.csv(grid, results)
+        o.out match
+          case Some(path) => Files.writeString(path, csv, StandardCharsets.UTF_8)
+          case None => out.print(csv)
+        o.jsonl.foreach(path =>
+          Files.writeString(path, SweepOutput.jsonLines(results), StandardCharsets.UTF_8)
+        )
+        val written = o.manifests match
+          case Some(dir) => SweepOutput.writeManifests(dir, results).map(_.size)
+          case None => Right(0)
+        written.map { _ =>
+          val failed = results.filter(_.outcome.isLeft)
+          failed.foreach(r =>
+            err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
+          )
+          err.println(
+            s"# sweep of ${o.model}: ${grid.size} points on $threads threads, ${failed.size} failed"
+          )
+          if failed.isEmpty then 0 else 1
+        }
+      catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
     }
 
   private def number(text: String, option: String): Either[String, Double] =
     text.toDoubleOption.toRight(s"$option expects a number, got '$text'")
+
+  private def whole(text: String, option: String, least: Long): Either[String, Long] =
+    text.toLongOption
+      .toRight(s"$option expects an integer, got '$text'")
+      .filterOrElse(_ >= least, s"$option must be at least $least, got $text")
