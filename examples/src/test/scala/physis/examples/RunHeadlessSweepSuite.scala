@@ -192,6 +192,85 @@ class RunHeadlessSweepSuite extends munit.FunSuite:
     }
   }
 
+  test("a montage tiles the final images, each equal to the image of the single run") {
+    withDir { dir =>
+      val base = Seq("--model", "gray-scott", "--param", "nx=32", "--param", "ny=32")
+      val montage = dir.resolve("montage.png")
+      val (code, csv, err) = go(
+        base ++ Seq(
+          "--until",
+          "40",
+          "--sweep",
+          "F=0.03,0.05",
+          "--sweep",
+          "k=0.06,0.065,0.07",
+          "--montage",
+          montage.toString
+        )
+      )
+      assertEquals(code, 0, err)
+      assertEquals(csv.linesIterator.size, 7)
+      assert(err.contains("montage of 6 pictures") && err.contains("3 to a row"), err)
+      val sheet = ImageIO.read(montage.toFile)
+      assertEquals((sheet.getWidth, sheet.getHeight), (3 * 32 + 2, 2 * 32 + 1))
+      // point 4 is F = 0.05, k = 0.065: column 1, row 1
+      val frames = dir.resolve("single")
+      val (single, _, singleErr) = go(
+        base ++ Seq(
+          "--param",
+          "F=0.05",
+          "--param",
+          "k=0.065",
+          "--steps",
+          "40",
+          "--every",
+          "40",
+          "--no-color-bar",
+          "--frames",
+          frames.toString
+        )
+      )
+      assertEquals(single, 0, singleErr)
+      val tile = ImageIO.read(frames.resolve("frame-00001.png").toFile)
+      assertEquals((tile.getWidth, tile.getHeight), (32, 32))
+      for y <- 0 until 32; x <- 0 until 32 do
+        assertEquals(sheet.getRGB(33 + x, 33 + y), tile.getRGB(x, y), s"($x, $y)")
+      val (wide, _, wideErr) = go(
+        base ++ Seq(
+          "--until",
+          "5",
+          "--sweep",
+          "F=0.03,0.05,0.04",
+          "--montage",
+          montage.toString,
+          "--montage-columns",
+          "2",
+          "--scale",
+          "2"
+        )
+      )
+      assertEquals(wide, 0, wideErr)
+      val sheet2 = ImageIO.read(montage.toFile)
+      assertEquals((sheet2.getWidth, sheet2.getHeight), ((2 * 32 + 1) * 2, (2 * 32 + 1) * 2))
+    }
+  }
+
+  test("a montage needs a model with an image") {
+    val (code, _, err) = capture(
+      "--model",
+      "lorenz",
+      "--until",
+      "1",
+      "--sweep",
+      "rho=20,28",
+      "--montage",
+      "/tmp/never-written.png"
+    )
+    assertEquals(code, 1)
+    assert(err.contains("no image for a montage"), err)
+    assert(RunHeadless.parse(List("--montage-columns", "0")).isLeft)
+  }
+
   test("a model without an image says so") {
     val (code, _, err) = capture("--model", "lorenz", "--frames", "/tmp/never-written")
     assertEquals(code, 1)

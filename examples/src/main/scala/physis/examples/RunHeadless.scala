@@ -7,7 +7,7 @@ import java.nio.file.{Files, Path}
 import physis.core.{Model, Probe, Stepping}
 import physis.core.live.StateExport
 import physis.core.run.{InterventionEvent, Manifest, ParamEvent, Physis, Run}
-import physis.core.sweep.{ParamGrid, Sweep, SweepOutput, SweepSetup}
+import physis.core.sweep.{ParamGrid, PointResult, Sweep, SweepOutput, SweepSetup}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams}
@@ -15,7 +15,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
-import physis.view.{Frames, View}
+import physis.view.{Frame, Frames, Montage, Png, View}
 
 /**
  * Runs a model without a UI and prints its probes as CSV.
@@ -69,6 +69,9 @@ object RunHeadless:
       |  --out <path>           write the CSV to <path> instead of standard output
       |  --jsonl <path>         also write one JSON object per point
       |  --manifests <dir>      also write point-NNNN.json, a manifest per point that replays
+      |  --montage <path>       also tile the final images of all points into one PNG (the last
+      |                         axis along a row; --scale and --compress apply)
+      |  --montage-columns <n>  tiles per row instead
       |  --help                 show this help""".stripMargin
 
   final case class Options(
@@ -95,7 +98,9 @@ object RunHeadless:
       threads: Option[Int] = None,
       out: Option[Path] = None,
       jsonl: Option[Path] = None,
-      manifests: Option[Path] = None
+      manifests: Option[Path] = None,
+      montage: Option[Path] = None,
+      montageColumns: Option[Int] = None
   ):
     /**
      * Stepping from a manifest when replaying, otherwise from --adaptive or --dt, otherwise the
@@ -199,6 +204,10 @@ object RunHeadless:
         whole(v, "--threads", 1L).flatMap(n => parse(rest, options.copy(threads = Some(n.toInt))))
       case "--frames" :: path :: rest => parse(rest, options.copy(frames = Some(Path.of(path))))
       case "--sweep" :: axis :: rest => parse(rest, options.copy(sweep = options.sweep :+ axis))
+      case "--montage" :: path :: rest => parse(rest, options.copy(montage = Some(Path.of(path))))
+      case "--montage-columns" :: v :: rest =>
+        whole(v, "--montage-columns", 1L)
+          .flatMap(n => parse(rest, options.copy(montageColumns = Some(n.toInt))))
       case "--out" :: path :: rest => parse(rest, options.copy(out = Some(Path.of(path))))
       case "--jsonl" :: path :: rest => parse(rest, options.copy(jsonl = Some(Path.of(path))))
       case "--manifests" :: path :: rest =>
@@ -357,6 +366,9 @@ object RunHeadless:
       }
     }
 
+  /** What a sweep keeps of each run besides its probes. */
+  private final case class Extra(manifest: String, picture: Option[Frame])
+
   /** The product of the axes as a CSV, in grid order; exit code 1 when a point failed. */
   private def sweep(
       entry: Entry[Any, Any],
@@ -364,43 +376,78 @@ object RunHeadless:
       out: PrintStream,
       err: PrintStream
   ): Either[String, Int] =
-    ParamGrid.parse(o.sweep, entry.model.params).flatMap { grid =>
-      val setup = SweepSetup[Any, Any](
-        entry.model,
-        entry.probes,
-        o.steppingFor(entry.stepping),
-        o.until,
-        if o.until > 0.0 then o.until else 1.0,
-        o.params,
-        o.seed
-      )
-      val threads = o.threads.getOrElse(Sweep.defaultThreads)
-      val results = Sweep.run(setup, grid, threads) { (run, _) =>
-        if o.manifests.isDefined then Manifest.toJson(run.manifest(o.until)) else ""
-      }
-      try
-        val csv = SweepOutput.csv(grid, results)
-        o.out match
-          case Some(path) => Files.writeString(path, csv, StandardCharsets.UTF_8)
-          case None => out.print(csv)
-        o.jsonl.foreach(path =>
-          Files.writeString(path, SweepOutput.jsonLines(results), StandardCharsets.UTF_8)
+    if o.montage.isDefined && entry.image.isEmpty then
+      Left(s"model '${o.model}' has no image for a montage")
+    else
+      ParamGrid.parse(o.sweep, entry.model.params).flatMap { grid =>
+        val setup = SweepSetup[Any, Any](
+          entry.model,
+          entry.probes,
+          o.steppingFor(entry.stepping),
+          o.until,
+          if o.until > 0.0 then o.until else 1.0,
+          o.params,
+          o.seed
         )
-        val written = o.manifests match
-          case Some(dir) => SweepOutput.writeManifests(dir, results).map(_.size)
-          case None => Right(0)
-        written.map { _ =>
-          val failed = results.filter(_.outcome.isLeft)
-          failed.foreach(r =>
-            err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
-          )
-          err.println(
-            s"# sweep of ${o.model}: ${grid.size} points on $threads threads, ${failed.size} failed"
-          )
-          if failed.isEmpty then 0 else 1
+        val threads = o.threads.getOrElse(Sweep.defaultThreads)
+        val tile = Frames.Options(every = 1, colorBar = false)
+        val results = Sweep.run(setup, grid, threads) { (run, _) =>
+          val manifest =
+            if o.manifests.isDefined then Manifest.toJson(run.manifest(o.until)) else ""
+          val picture = entry.image
+            .filter(_ => o.montage.isDefined)
+            .flatMap(i => Frames.frame(Frames.snapshot(run, i.exporter), i.view, tile))
+          Extra(manifest, picture)
         }
-      catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
-    }
+        try
+          val csv = SweepOutput.csv(grid, results)
+          o.out match
+            case Some(path) => Files.writeString(path, csv, StandardCharsets.UTF_8)
+            case None => out.print(csv)
+          o.jsonl.foreach(path =>
+            Files.writeString(path, SweepOutput.jsonLines(results), StandardCharsets.UTF_8)
+          )
+          val manifests = results.map(r =>
+            PointResult(r.point, r.outcome.map(o => o.copy(extra = o.extra.manifest)))
+          )
+          val written = o.manifests match
+            case Some(dir) => SweepOutput.writeManifests(dir, manifests).map(_.size)
+            case None => Right(0)
+          written.flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
+            val failed = results.filter(_.outcome.isLeft)
+            failed.foreach(r =>
+              err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
+            )
+            err.println(
+              s"# sweep of ${o.model}: ${grid.size} points on $threads threads, ${failed.size} failed"
+            )
+            if failed.isEmpty then 0 else 1
+          }
+        catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
+      }
+
+  /** Tiles the final pictures of a sweep into the `--montage` file, if one was asked for. */
+  private def writeMontage(
+      grid: ParamGrid,
+      results: Vector[PointResult[Extra]],
+      o: Options,
+      err: PrintStream
+  ): Either[String, Unit] =
+    o.montage match
+      case None => Right(())
+      case Some(path) =>
+        val columns = o.montageColumns.getOrElse(
+          if grid.axes.size >= 2 then grid.axes.last.values.size
+          else math.ceil(math.sqrt(grid.size.toDouble)).toInt
+        )
+        val tiles = results.map(_.outcome.toOption.flatMap(_.extra.picture))
+        Montage.tile(tiles, columns).map { m =>
+          Png.write(path, m.pixels, m.width, m.height, o.scale, o.compress)
+          err.println(
+            s"# montage of ${tiles.count(_.isDefined)} pictures in $path, " +
+              s"${m.width * o.scale} x ${m.height * o.scale} px, $columns to a row"
+          )
+        }
 
   private def number(text: String, option: String): Either[String, Double] =
     text.toDoubleOption.toRight(s"$option expects a number, got '$text'")
