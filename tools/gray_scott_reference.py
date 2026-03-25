@@ -7,6 +7,7 @@ Usage (numpy is the only dependency):
     python tools/gray_scott_reference.py fields > models/grayscott/src/test/resources/gray-scott-64x64-100.csv
     python tools/gray_scott_reference.py digest     # golden digest of 1 000 steps, 64 x 64
     python tools/gray_scott_reference.py regimes    # coverage and max v of the presets
+    python tools/gray_scott_reference.py map        # coverage and max v on a 5 x 5 grid of (F, k)
 
 Regenerating the golden data is a deliberate act: review the diff.
 """
@@ -85,6 +86,14 @@ def main() -> None:
             u, v = run(128, 128, 8000, f=f, k=k)
             print(f"{name:9s} F={f} k={k}: coverage(v>0.2)={(v > 0.2).mean():.4f} "
                   f"v_max={v.max():.6f} v_mean={v.mean():.6f} u_min={u.min():.4f} u_max={u.max():.4f}")
+    elif mode == "map":
+        # the 5 x 5 map the slow test MapSuite classifies: F down the rows, k along them
+        for f in (0.02, 0.03, 0.04, 0.05, 0.06):
+            cells = []
+            for k in (0.050, 0.055, 0.060, 0.065, 0.070):
+                u, v = run(128, 128, 8000, f=f, k=k)
+                cells.append(f"{(v > 0.2).mean():.3f}/{v.max():.3f}")
+            print(f"F={f}: " + "  ".join(cells), flush=True)
 
 
 if __name__ == "__main__":
