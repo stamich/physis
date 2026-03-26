@@ -21,7 +21,7 @@ for the current platform (Linux, macOS, Windows; x64 and arm64) by the build.
 | Area | Contents |
 | --- | --- |
 | Left | model picker, presets, parameter panel, tool box, seed field, run controls |
-| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude) |
+| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude; Physarum: the trail with the agents as white dots above coverage and structures) |
 | Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; the value of the heatmap cell under the pointer; status messages |
 | Menu | File → Save manifest…, Replay manifest…, Close |
 
@@ -52,7 +52,7 @@ a new run with the edited values, and Reset (R) discards them.
 | Pause / resume | Pause / Play | Space |
 | One step (while paused) | Step | Right arrow |
 | Restart from the initial state | Reset | R |
-| Faster / slower (the range depends on the model: 0.01x to 100x for the ODE models, 10 to 4 000 steps/s for Gray–Scott, 0.1x to 20x for Boids, 20 to 2 000 steps/s for Waves) | Speed slider | + / − |
+| Faster / slower (the range depends on the model: 0.01x to 100x for the ODE models, 10 to 4 000 steps/s for Gray–Scott, 0.1x to 20x for Boids, 20 to 2 000 steps/s for Waves, 5 to 600 steps/s for Physarum) | Speed slider | + / − |
 | Rotate a 3D view | drag | |
 | Zoom | scroll | |
 | Default orientation and zoom | double-click | |
@@ -60,9 +60,13 @@ a new run with the edited values, and Reset (R) discards them.
 
 Shortcuts are ignored while a text field has the focus or a stroke is being dragged.
 
+## Saving images
+
+**File → Save image** writes the first image of the view (the field as drawn, with a colour scale) as a PNG at 1×, 2×, 4× or 8×; see [export.md](export.md).
+
 ## Painting
 
-Gray–Scott, Boids and Waves have a **tool box** under the parameters. At first no tool is on and
+Gray–Scott, Boids, Waves and Physarum have a **tool box** under the parameters. At first no tool is on and
 the pointer only reads cells. Choosing a tool turns the brush on: a ring follows the pointer and
 shows its radius.
 
@@ -71,6 +75,7 @@ shows its radius.
 | Gray–Scott | **Paint v** (sets v to a value; right button erases), **Erase v** |
 | Waves | **Wall** (right button erases), **Erase wall**, **Pulse** (value: amplitude) |
 | Boids | **Disturb** (value: strength) |
+| Physarum | **Paint food** (right button erases), **Erase food**, **Paint trail** |
 
 The left button applies the tool and dragging paints a line; the right button erases where the
 tool paints. The mouse wheel over the view changes the radius, the slider and the value field do

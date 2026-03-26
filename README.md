@@ -14,7 +14,10 @@ while it runs, with sessions that replay bit for bit. Milestone 0.3 adds **field
 them, Gray–Scott reaction–diffusion and Boids, both live in the Lab. Milestone 0.4 adds **waves**
 (the damped wave equation with painted walls, a source and absorbing edges) and **interventions**:
 you can paint into a running model with the mouse, and the strokes are recorded in the manifest
-so that a painted session still replays bit for bit.
+so that a painted session still replays bit for bit. Milestone 0.5 adds **Physarum** (agents that
+lay and follow a trail, the first model where agents and a field act on each other), **parameter
+sweeps** that run a grid of whole runs on all cores with the same results for any number of
+threads, and **image export** with an own PNG writer: frames, montages and File → Save image.
 
 ## Modules
 
@@ -29,6 +32,7 @@ so that a painted session still replays bit for bit.
 | `models/grayscott` | Gray–Scott reaction–diffusion with Pearson's regimes as presets |
 | `models/boids` | Boids and the Vicsek model on a periodic world |
 | `models/wave` | damped wave equation with walls, a source, reflective, free, periodic and absorbing edges |
+| `models/physarum` | Physarum agents on a trail, with presets for networks, meshes and spots |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -46,7 +50,7 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids and waves, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves and Physarum, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
@@ -55,6 +59,10 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 # Gray–Scott on 64 x 64 and Boids as CSV: a first look without a window
 ./gradlew :examples:run --args="--model gray-scott --param nx=64 --param ny=64 --until 3000 --sample-every 500"
 ./gradlew :examples:run --args="--model boids --param n=500 --until 10 --sample-every 1"
+
+# A 5 x 5 patch of the Gray–Scott map as one picture, and Physarum frames
+./gradlew :examples:run --args="--model gray-scott --until 8000 --param nx=128 --param ny=128 --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5 --montage map.png"
+./gradlew :examples:run --args="--model physarum --steps 600 --frames out --every 60 --scale 3"
 
 # Chaotic double pendulum with adaptive steps; save the manifest, then replay it
 ./gradlew :examples:run --args="--model double-pendulum --adaptive 1e-9 --until 10 --manifest run.json"

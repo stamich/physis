@@ -2,6 +2,41 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.5.0 — agents in fields, export and sweeps
+
+Fifth milestone: a model where agents and a field act on each other, runs in bulk, and pictures
+out of the box.
+
+### Added
+
+- **Sweeps** (`modules/core`): `ParamGrid` (`a:b:n`, `log:a:b:n`, lists, `seed=a..b`), `Sweep.run`
+  on a fixed pool of threads with results in grid order for any thread count, `SweepOutput`
+  (CSV, JSON Lines, a manifest per point); [docs/sweeps.md](docs/sweeps.md).
+- **Images** (`modules/view`): `Png`, an own PNG writer with stored deflate blocks (the same bytes
+  on every platform; `compress` is optional), `FrameImage`, `Frames`, `Montage`;
+  [docs/export.md](docs/export.md).
+- **Fields** (`modules/fields`): `Sampler` and `Deposit` (nearest and bilinear, periodic) to couple
+  agents and fields, and `TrailOps` (3 × 3 diffusion, decay).
+- **Physarum** (`models/physarum`): after Jones (2010), with food and trail strokes, three presets,
+  probes for trail mass, coverage and structures, an independent numpy reference and a golden
+  digest equal on Ubuntu and macOS; [docs/models/physarum.md](docs/models/physarum.md).
+- **View**: `View.Layers` (a heatmap with agents drawn as dots).
+- **Physis Lab**: Physarum (5–600 steps/s) with its tools; File → Save image at 1×–8×.
+- **Command line** (`examples`, `RunHeadless`): `--list`, `--steps`, `--frames`, `--sweep`,
+  `--montage`, wave and Physarum, and a replay that carries events and strokes;
+  [docs/cli.md](docs/cli.md).
+- **Tests**: a slow test that classifies a 5 × 5 patch of the Gray–Scott F–k map against the
+  reference (at least 20 of 25), and speed bars for Physarum, sweep scaling and PNG writing.
+
+### Changed from the 0.5 plan
+
+- The command line stays in `examples` (`RunHeadless`); `apps/cli` is left for 0.5.1.
+- PNG is written by Physis itself, not by `javax.imageio`.
+- The coupled model is Physarum.
+- The JDK stays at 22; JDK 25 is not used.
+- The Physarum speed bar starts low (5 million agent steps per second) and is raised after it has
+  been measured on CI.
+
 ## 0.4.0 — waves and interventions
 
 Fourth milestone: painting into a running model. Brush strokes, pulses and disturbances are
