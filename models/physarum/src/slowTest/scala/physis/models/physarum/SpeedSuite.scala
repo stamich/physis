@@ -1,19 +1,21 @@
 package physis.models.physarum
 
 import physis.core.run.Physis
+import physis.verify.SpeedReport
 import physis.view.Png
 
 /**
- * Speed bars for the 0.5 features. They are set well below what a development machine does, so
- * that a slow CI machine passes but an accidental allocation, a lost inlining or a PNG writer
- * that went quadratic would not. The measured rates go to the test output.
+ * Speed bars for the 0.5 features. They are set below what the CI runners measured (Physarum
+ * 31.5 and 16.1 million agent steps per second on two runs, a 512 x 512 PNG in 0.9 to 1.6 ms), so that a slow run passes but
+ * an accidental allocation, a lost inlining or a PNG writer that went quadratic would not. The
+ * measured rates go to the test output and to `build/speed`.
  */
 class SpeedSuite extends munit.FunSuite:
   override val munitTimeout = scala.concurrent.duration.Duration(5, "min")
 
   private def median(values: Array[Double]): Double = values.sorted.apply(values.length / 2)
 
-  test("Physarum moves at least 5 million agents per second on 512 x 512 (median of 5)") {
+  test("Physarum moves at least 12 million agents per second on 512 x 512 (best of 5 windows)") {
     val n = 200000
     val run = Physis
       .model(Physarum)
@@ -28,9 +30,12 @@ class SpeedSuite extends munit.FunSuite:
       run.runSteps(steps)
       n.toDouble * steps / ((System.nanoTime() - start) / 1e9)
     }
-    val m = median(rates)
-    println(f"physarum: ${m / 1e6}%.1f million agent steps per second (512 x 512, n = $n)")
-    assert(m >= 5e6, f"median ${m / 1e6}%.1f million agent steps per second")
+    // Runners differ by a factor of two from one run to the next (31.5 and 16.1 million were
+    // measured), so the best window is compared with a bar below the slower of the two.
+    val m = rates.max
+    println(SpeedReport.record("physarum agent steps 512x512", m / 1e6, "million/s"))
+    val windows = rates.map(r => f"${r / 1e6}%.1f").mkString(", ")
+    assert(m >= 12e6, f"best ${m / 1e6}%.1f million agent steps per second (windows: $windows)")
   }
 
   test("a 512 x 512 PNG is written in under 30 ms (median of 9)") {
@@ -47,6 +52,6 @@ class SpeedSuite extends munit.FunSuite:
       (System.nanoTime() - start) / 1e6
     }
     val m = median(times)
-    println(f"png: $m%.1f ms for 512 x 512")
+    println(SpeedReport.record("png 512x512", m, "ms"))
     assert(m < 30.0, f"median $m%.1f ms")
   }

@@ -72,3 +72,13 @@ jobs:
         if: failure()
         shell: bash
         run: python3 .github/scripts/annotate_build_log.py build.log
+      - name: Speed report
+        if: always()
+        shell: bash
+        run: |
+          # the numbers the speed tests measured: in the job summary and as one annotation
+          lines=$(find . -path '*/build/speed/*.txt' | sort | xargs -r cat)
+          if [ -n "$lines" ]; then
+            { echo "### Measured speeds"; echo; echo "$lines" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Measured speeds::$(echo "$lines" | tr '\n' ';')"
+          fi
