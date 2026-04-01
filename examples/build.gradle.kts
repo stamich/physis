@@ -6,6 +6,7 @@ plugins {
 description = "Physis examples: headless runs from the command line."
 
 dependencies {
+    implementation(project(":apps:cli"))
     implementation(project(":models:lorenz"))
     implementation(project(":models:pendulum"))
     implementation(project(":models:grayscott"))
