@@ -82,3 +82,46 @@ class CliSuite extends munit.FunSuite:
     assertEquals(go("run", "--model", "nope")._1, 1)
     assertEquals(go("run", "--param", "rho")._1, 2)
   }
+
+  test("list names every model and describe gives one in full") {
+    val (code, listing, _) = go("list")
+    assertEquals(code, 0)
+    val models = Vector("lorenz", "double-pendulum", "gray-scott", "boids", "wave", "physarum")
+    for id <- models do assert(listing.contains(s"$id (version "), id)
+    for id <- models do
+      val (c, text, err) = go("describe", id)
+      assertEquals(c, 0, err)
+      val lines = text.linesIterator.toVector
+      assert(lines.head.startsWith(s"$id (version "), lines.head)
+      assertEquals(lines.count(_ == "parameters:"), 1)
+      assert(lines.exists(_.startsWith("presets:")), text)
+      assert(lines.exists(_.startsWith("probes: ")), text)
+      assert(lines.exists(_.startsWith("image: ")), text)
+  }
+
+  test("describe shows presets, the units of probes and the missing image of an ODE model") {
+    val (_, physarum, _) = go("describe", "physarum")
+    assert(physarum.contains("Network:"), physarum)
+    assert(physarum.contains("Mesh:") && physarum.contains("Spots:"), physarum)
+    assert(physarum.contains("trail_mass ["), physarum)
+    assert(physarum.contains("image: yes"), physarum)
+    val (_, lorenz, _) = go("describe", "lorenz")
+    assert(lorenz.contains("presets: none"), lorenz)
+    assert(lorenz.contains("image: no"), lorenz)
+    val (code, _, err) = go("describe", "nope")
+    assertEquals(code, 1)
+    assert(err.contains("unknown model 'nope' (known: "), err)
+    assertEquals(go("describe")._1, 2)
+    assertEquals(go("describe", "a", "b")._1, 2)
+  }
+
+  test("the models that have presets list them under presets") {
+    for id <- Seq("gray-scott", "boids", "physarum") do
+      val (_, text, _) = go("describe", id)
+      val presetLines = text.linesIterator
+        .dropWhile(_ != "presets:")
+        .drop(1)
+        .takeWhile(_.startsWith("  "))
+        .toVector
+      assert(presetLines.nonEmpty, id)
+  }

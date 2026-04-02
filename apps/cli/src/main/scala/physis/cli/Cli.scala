@@ -13,6 +13,9 @@ object Plan:
   final case class Help(command: Option[String]) extends Plan
   case object Version extends Plan
 
+  /** The parameters, presets and probes of one model. */
+  final case class Describe(model: String) extends Plan
+
   /** Run the engine with these (checked) options of [[Headless]]. */
   final case class Engine(args: List[String]) extends Plan
 
@@ -53,6 +56,7 @@ object Cli:
       |  montage <png>       like sweep, and tile the final images of all points into <png>
       |  replay <manifest>   re-run a manifest, with its changes and strokes
       |  list                list the models with their parameters
+      |  describe <model>    one model in full: parameters, presets, probes
       |
       |  --version           print the version
       |  --help              print this text; 'physis-cli <command> --help' the options
@@ -106,6 +110,9 @@ object Cli:
         s"  --frames <dir>         write frames instead\n  --every <n>, --scale <n>, " +
         "--no-color-bar, --compress  as for frames"
     case "list" => "Usage: physis-cli list\n\nLists the models with their parameters."
+    case "describe" =>
+      "Usage: physis-cli describe <model>\n\nParameters with range and unit, presets, probes, " +
+        "the step and whether the model has an image."
     case _ => Usage
 
   /** Reads the command line. `Left` is a usage error. */
@@ -131,11 +138,14 @@ object Cli:
       }
     case "list" :: Nil => Right(Plan.Engine(List("--list")))
     case "list" :: _ => Left("list takes no arguments")
+    case "describe" :: id :: Nil if !id.startsWith("-") => Right(Plan.Describe(id))
+    case "describe" :: _ => Left("describe takes one model: physis-cli describe <model>")
     case other :: _ if other.startsWith("-") =>
       Left(s"unknown option '$other' (a command comes first)")
     case other :: _ => Left(s"unknown command '$other'")
 
-  val Commands: Vector[String] = Vector("run", "frames", "sweep", "montage", "replay", "list")
+  val Commands: Vector[String] =
+    Vector("run", "frames", "sweep", "montage", "replay", "list", "describe")
 
   private def sweep(command: String, args: List[String], spec: Spec): Either[String, List[String]] =
     checked(command, args, spec).flatMap { a =>
@@ -180,6 +190,12 @@ object Cli:
       case Right(Plan.Version) =>
         out.println(s"physis-cli ${BuildInfo.version}")
         0
+      case Right(Plan.Describe(id)) =>
+        Headless.describe(id, out) match
+          case Right(()) => 0
+          case Left(error) =>
+            err.println(s"error: $error")
+            1
       case Right(Plan.Engine(engineArgs)) =>
         Headless.parse(engineArgs) match
           case Left(error) =>

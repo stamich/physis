@@ -6,6 +6,7 @@ import java.nio.file.{Files, Path}
 
 import physis.core.{Model, Probe, Stepping}
 import physis.core.live.StateExport
+import physis.core.param.Preset
 import physis.core.run.{InterventionEvent, Manifest, ParamEvent, Physis, Run}
 import physis.core.sweep.{ParamGrid, PointResult, Sweep, SweepOutput, SweepSetup}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
@@ -118,7 +119,8 @@ object Headless:
       model: Model.Aux[P, S],
       probes: P => Vector[Probe[S]],
       stepping: Stepping,
-      image: Option[Image[S]] = None
+      image: Option[Image[S]] = None,
+      presets: Vector[Preset] = Vector.empty
   )
 
   /** What frames need of a model: how its state is exported and what its view is. */
@@ -133,13 +135,15 @@ object Headless:
       GrayScott,
       _ => GrayScott.probes,
       GrayScott.stepping,
-      Some(Image(GrayScottState.stateExport, GrayScottViews.default))
+      Some(Image(GrayScottState.stateExport, GrayScottViews.default)),
+      GrayScott.presets
     ),
     Boids.id -> Entry[BoidsParams, BoidsState](
       Boids,
       _ => Boids.probes,
       Boids.stepping,
-      Some(Image(BoidsState.stateExport, BoidsViews.default))
+      Some(Image(BoidsState.stateExport, BoidsViews.default)),
+      Boids.presets
     ),
     Wave.id -> Entry[WaveParams, WaveState](
       Wave,
@@ -151,7 +155,8 @@ object Headless:
       Physarum,
       _ => Physarum.probes,
       Physarum.stepping,
-      Some(Image(PhysarumState.stateExport, PhysarumViews.default))
+      Some(Image(PhysarumState.stateExport, PhysarumViews.default)),
+      Physarum.presets
     )
   )
 
@@ -262,21 +267,50 @@ object Headless:
 
   private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Int] =
     if o.list then
-      listModels(out)
+      list(out)
       Right(0)
     else
       catalog.get(o.model) match
         case None =>
-          Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
+          Left(unknownModel(o.model))
         case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any, Any]], o, out, err)
 
-  private def listModels(out: PrintStream): Unit =
+  private def paramLines(entry: Entry[?, ?]): Vector[String] =
+    entry.model.params.specs.toVector.map { p =>
+      val restart = if p.restart then ", needs a restart" else ""
+      val doc = if p.doc.isEmpty then "" else s" - ${p.doc}"
+      s"  ${p.name} = ${p.default} [${p.min}, ${p.max}] ${p.unit}$restart$doc"
+    }
+
+  /** Every model with its parameters. */
+  def list(out: PrintStream): Unit =
     for (id, entry) <- catalog.toList.sortBy(_._1) do
       out.println(s"$id (version ${entry.model.version})")
-      for p <- entry.model.params.specs do
-        val restart = if p.restart then ", needs a restart" else ""
+      paramLines(entry).foreach(out.println)
+
+  /** One model in full: parameters, presets, probes, stepping and whether it has an image. */
+  def describe(id: String, out: PrintStream): Either[String, Unit] =
+    catalog.get(id).toRight(unknownModel(id)).map { found =>
+      val entry = found.asInstanceOf[Entry[Any, Any]]
+      out.println(s"$id (version ${entry.model.version})")
+      out.println(s"step: ${entry.stepping}")
+      out.println("parameters:")
+      paramLines(entry).foreach(out.println)
+      out.println("presets:" + (if entry.presets.isEmpty then " none" else ""))
+      for p <- entry.presets do
+        val values = p.values.toList.sortBy(_._1).map((k, v) => s"$k=$v").mkString(", ")
         val doc = if p.doc.isEmpty then "" else s" - ${p.doc}"
-        out.println(s"  ${p.name} = ${p.default} [${p.min}, ${p.max}] ${p.unit}$restart$doc")
+        out.println(s"  ${p.name}: $values$doc")
+      val probes = entry.probes(entry.model.params.defaults).map(pr => s"${pr.name} [${pr.unit}]")
+      out.println(s"probes: ${probes.mkString(", ")}")
+      out.println(
+        if entry.image.isDefined then "image: yes (frames and montages)"
+        else "image: no (the view is not a field)"
+      )
+    }
+
+  private def unknownModel(id: String): String =
+    s"unknown model '$id' (known: ${catalog.keys.toList.sorted.mkString(", ")})"
 
   private def executeEntry(
       entry: Entry[Any, Any],
