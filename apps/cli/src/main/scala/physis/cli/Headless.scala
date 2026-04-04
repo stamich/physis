@@ -71,6 +71,10 @@ object Headless:
       |  --threads <n>          runs at the same time (default: one per processor)
       |  --out <path>           write the CSV to <path> instead of standard output
       |  --jsonl <path>         also write one JSON object per point
+      |  --progress             print "# done/total" to standard error as points finish
+      |  --dry-run              print the grid (axes and number of points) and run nothing
+      |  --fail-fast            check every point first (parameters and the model's own
+      |                         limits) and run nothing if one is refused
       |  --manifests <dir>      also write point-NNNN.json, a manifest per point that replays
       |  --montage <path>       also tile the final images of all points into one PNG (the last
       |                         axis along a row; --scale and --compress apply)
@@ -90,6 +94,9 @@ object Headless:
       exactStepping: Option[Stepping] = None,
       list: Boolean = false,
       preset: Option[String] = None,
+      progress: Boolean = false,
+      dryRun: Boolean = false,
+      failFast: Boolean = false,
       steps: Option[Long] = None,
       events: Vector[ParamEvent] = Vector.empty,
       interventions: Vector[InterventionEvent] = Vector.empty,
@@ -184,6 +191,9 @@ object Headless:
       case "--preset" :: name :: rest => parse(rest, options.copy(preset = Some(name)))
       case "--no-color-bar" :: rest => parse(rest, options.copy(colorBar = false))
       case "--compress" :: rest => parse(rest, options.copy(compress = true))
+      case "--progress" :: rest => parse(rest, options.copy(progress = true))
+      case "--dry-run" :: rest => parse(rest, options.copy(dryRun = true))
+      case "--fail-fast" :: rest => parse(rest, options.copy(failFast = true))
       case "--model" :: id :: rest => parse(rest, options.copy(model = id))
       case "--param" :: assignment :: rest =>
         assignment.split("=", 2) match
@@ -434,51 +444,96 @@ object Headless:
       Left(s"model '${o.model}' has no image for a montage")
     else
       ParamGrid.parse(o.sweep, entry.model.params).flatMap { grid =>
-        val setup = SweepSetup[Any, Any](
-          entry.model,
-          entry.probes,
-          o.steppingFor(entry.stepping),
-          o.until,
-          if o.until > 0.0 then o.until else 1.0,
-          o.params,
-          o.seed
-        )
-        val threads = o.threads.getOrElse(Sweep.defaultThreads)
-        val tile = Frames.Options(every = 1, colorBar = false)
-        val results = Sweep.run(setup, grid, threads) { (run, _) =>
-          val manifest =
-            if o.manifests.isDefined then Manifest.toJson(run.manifest(o.until)) else ""
-          val picture = entry.image
-            .filter(_ => o.montage.isDefined)
-            .flatMap(i => Frames.frame(Frames.snapshot(run, i.exporter), i.view, tile))
-          Extra(manifest, picture)
-        }
-        try
-          val csv = SweepOutput.csv(grid, results)
-          o.out match
-            case Some(path) => Files.writeString(path, csv, StandardCharsets.UTF_8)
-            case None => out.print(csv)
-          o.jsonl.foreach(path =>
-            Files.writeString(path, SweepOutput.jsonLines(results), StandardCharsets.UTF_8)
-          )
-          val manifests = results.map(r =>
-            PointResult(r.point, r.outcome.map(o => o.copy(extra = o.extra.manifest)))
-          )
-          val written = o.manifests match
-            case Some(dir) => SweepOutput.writeManifests(dir, manifests).map(_.size)
-            case None => Right(0)
-          written.flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
-            val failed = results.filter(_.outcome.isLeft)
-            failed.foreach(r =>
-              err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
-            )
-            err.println(
-              s"# sweep of ${o.model}: ${grid.size} points on $threads threads, ${failed.size} failed"
-            )
-            if failed.isEmpty then 0 else 1
-          }
-        catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
+        if o.dryRun then dryRun(grid, o, out)
+        else
+          (if o.failFast then checkPoints(entry, o, grid) else Right(()))
+            .flatMap(_ => runGrid(entry, o, grid, out, err))
       }
+
+  /** What a sweep would run: the axes and the number of points. */
+  private def dryRun(grid: ParamGrid, o: Options, out: PrintStream): Either[String, Int] =
+    out.println(s"# sweep of ${o.model}: ${grid.size} points, nothing run")
+    for axis <- grid.axes do
+      out.println(s"# ${axis.name}: ${axis.values.map(java.lang.Double.toString).mkString(", ")}")
+    Right(0)
+
+  /** Every point against the schema and the model's own limits, before any run starts. */
+  private def checkPoints(
+      entry: Entry[Any, Any],
+      o: Options,
+      grid: ParamGrid
+  ): Either[String, Unit] =
+    val schema = entry.model.params
+    val stepping = o.steppingFor(entry.stepping)
+    grid.points.iterator
+      .map { point =>
+        schema
+          .withOverrides(schema.defaults, o.params ++ point.values)
+          .flatMap(p => entry.model.check(p, stepping))
+          .left
+          .map(e => s"point ${point.index} (${describePoint(point.values)}): $e")
+      }
+      .collectFirst { case Left(error) => error }
+      .toLeft(())
+
+  private def describePoint(values: scala.collection.Map[String, Double]): String =
+    values.map((k, v) => s"$k=$v").mkString(", ")
+
+  private def runGrid(
+      entry: Entry[Any, Any],
+      o: Options,
+      grid: ParamGrid,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    val setup = SweepSetup[Any, Any](
+      entry.model,
+      entry.probes,
+      o.steppingFor(entry.stepping),
+      o.until,
+      if o.until > 0.0 then o.until else 1.0,
+      o.params,
+      o.seed
+    )
+    val threads = o.threads.getOrElse(Sweep.defaultThreads)
+    val tile = Frames.Options(every = 1, colorBar = false)
+    val done = new java.util.concurrent.atomic.AtomicInteger(0)
+    val results = Sweep.run(setup, grid, threads) { (run, result) =>
+      if o.progress then err.println(s"# ${done.incrementAndGet()}/${grid.size}")
+      val manifest =
+        if o.manifests.isDefined then
+          Manifest.toJson(run.manifest(o.until).copy(digest = Some(result.finalDigest)))
+        else ""
+      val picture = entry.image
+        .filter(_ => o.montage.isDefined)
+        .flatMap(i => Frames.frame(Frames.snapshot(run, i.exporter), i.view, tile))
+      Extra(manifest, picture)
+    }
+    try
+      val csv = SweepOutput.csv(grid, results)
+      o.out match
+        case Some(path) => Files.writeString(path, csv, StandardCharsets.UTF_8)
+        case None => out.print(csv)
+      o.jsonl.foreach(path =>
+        Files.writeString(path, SweepOutput.jsonLines(results), StandardCharsets.UTF_8)
+      )
+      val manifests = results.map(r =>
+        PointResult(r.point, r.outcome.map(o => o.copy(extra = o.extra.manifest)))
+      )
+      val written = o.manifests match
+        case Some(dir) => SweepOutput.writeManifests(dir, manifests).map(_.size)
+        case None => Right(0)
+      written.flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
+        val failed = results.filter(_.outcome.isLeft)
+        failed.foreach(r =>
+          err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
+        )
+        err.println(
+          s"# sweep of ${o.model}: ${grid.size} points on $threads threads, ${failed.size} failed"
+        )
+        if failed.isEmpty then 0 else 1
+      }
+    catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
 
   /** Tiles the final pictures of a sweep into the `--montage` file, if one was asked for. */
   private def writeMontage(

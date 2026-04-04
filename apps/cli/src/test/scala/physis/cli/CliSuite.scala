@@ -27,12 +27,13 @@ class CliSuite extends munit.FunSuite:
     )
     assertEquals(
       engine("sweep", "--sweep", "F=0.02:0.06:5", "--threads", "2"),
-      List("--sweep", "F=0.02:0.06:5", "--threads", "2")
+      List("--progress", "--sweep", "F=0.02:0.06:5", "--threads", "2")
     )
     assertEquals(
       engine("montage", "map.png", "--sweep", "k=0.05,0.06", "--montage-columns", "2"),
-      List("--montage", "map.png", "--sweep", "k=0.05,0.06", "--montage-columns", "2")
+      List("--montage", "map.png", "--progress", "--sweep", "k=0.05,0.06", "--montage-columns", "2")
     )
+    assertEquals(engine("sweep", "--quiet", "--sweep", "k=1,2"), List("--sweep", "k=1,2"))
     assertEquals(engine("replay", "run.json"), List("--replay", "run.json"))
     assertEquals(engine("list"), List("--list"))
   }

@@ -41,7 +41,7 @@ object Cli:
   private val sweepSpec = model ++ time ++
     Spec(
       Set("--sweep", "--threads", "--out", "--jsonl", "--manifests", "--montage", "--scale"),
-      Set("--compress")
+      Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast")
     )
   private val montageSpec = sweepSpec ++ Spec(Set("--montage-columns"))
   private val replaySpec = framesSpec ++ Spec(Set("--frames"))
@@ -84,7 +84,10 @@ object Cli:
       |  --threads <n>          runs at the same time (default: one per processor)
       |  --out <path>           write the CSV to <path> instead of standard output
       |  --jsonl <path>         also write one JSON object per point
-      |  --manifests <dir>      also write point-NNNN.json, a manifest per point""".stripMargin
+      |  --manifests <dir>      also write point-NNNN.json, a manifest per point
+      |  --quiet                no "# done/total" lines on standard error
+      |  --dry-run              print the axes and the number of points and run nothing
+      |  --fail-fast            check every point first and run nothing if one is refused""".stripMargin
 
   /** The text of `physis-cli <command> --help`. */
   def usageOf(command: String): String = command match
@@ -128,10 +131,11 @@ object Cli:
       positional("frames", "a directory", rest).flatMap { (dir, more) =>
         checked("frames", more, framesSpec).map(a => Plan.Engine("--frames" :: dir :: a))
       }
-    case "sweep" :: rest => sweep("sweep", rest, sweepSpec).map(Plan.Engine(_))
+    case "sweep" :: rest => sweep("sweep", rest, sweepSpec).map(a => Plan.Engine(progress(a)))
     case "montage" :: rest =>
       positional("montage", "a PNG file", rest).flatMap { (png, more) =>
-        sweep("montage", more, montageSpec).map(a => Plan.Engine("--montage" :: png :: a))
+        sweep("montage", more, montageSpec)
+          .map(a => Plan.Engine("--montage" :: png :: progress(a)))
       }
     case "replay" :: rest =>
       positional("replay", "a manifest file", rest).flatMap { (file, more) =>
@@ -144,6 +148,11 @@ object Cli:
     case other :: _ if other.startsWith("-") =>
       Left(s"unknown option '$other' (a command comes first)")
     case other :: _ => Left(s"unknown command '$other'")
+
+  /** A sweep reports its progress unless asked to be quiet; --quiet is not an engine option. */
+  private def progress(args: List[String]): List[String] =
+    if args.contains("--quiet") then args.filterNot(_ == "--quiet")
+    else "--progress" :: args
 
   val Commands: Vector[String] =
     Vector("run", "frames", "sweep", "montage", "replay", "list", "describe")
