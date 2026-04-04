@@ -125,3 +125,64 @@ class CliSuite extends munit.FunSuite:
         .toVector
       assert(presetLines.nonEmpty, id)
   }
+
+  test("a preset sets its values, and --param after it wins") {
+    val base = Seq("run", "--model", "gray-scott", "--param", "nx=64", "--param", "ny=64")
+    val short = Seq("--until", "50", "--sample-every", "50")
+    val (c1, viaPreset, e1) = go((base ++ Seq("--preset", "Coral") ++ short)*)
+    assertEquals(c1, 0, e1)
+    // the same run with the values spelled out gives the same numbers
+    val (c2, spelled, e2) = go(
+      (base ++ Seq("--param", "F=0.0545", "--param", "k=0.062") ++ short)*
+    )
+    assertEquals(c2, 0, e2)
+    assertEquals(viaPreset, spelled)
+    // the name is not case sensitive, and an explicit --param is applied after the preset
+    val (_, lower, _) = go((base ++ Seq("--preset", "coral") ++ short)*)
+    assertEquals(lower, viaPreset)
+    val (_, mixed, _) = go((base ++ Seq("--preset", "Coral", "--param", "k=0.05") ++ short)*)
+    assertNotEquals(mixed, viaPreset)
+    assert(e1.contains("final digest"), e1)
+  }
+
+  test("a preset gives the digest of a run built with the same values") {
+    import physis.core.run.Physis
+    import physis.models.physarum.Physarum
+    val preset = Physarum.presets.find(_.name == "Mesh").get
+    val reference = Physis
+      .model(Physarum)
+      .stepping(Physarum.stepping)
+      .overrides(Map("n" -> 500.0, "nx" -> 64.0, "ny" -> 64.0) ++ preset.values)
+      .seed(3L)
+      .build()
+      .runSteps(30)
+    val (code, _, summary) = go(
+      "run",
+      "--model",
+      "physarum",
+      "--preset",
+      "Mesh",
+      "--param",
+      "n=500",
+      "--param",
+      "nx=64",
+      "--param",
+      "ny=64",
+      "--seed",
+      "3",
+      "--steps",
+      "30"
+    )
+    assertEquals(code, 0, summary)
+    assert(summary.contains(f"final digest ${reference.finalDigest}%016x"), summary)
+  }
+
+  test("an unknown preset is an error that lists the known ones") {
+    val (code, _, err) = go("run", "--model", "gray-scott", "--preset", "Nope", "--until", "1")
+    assertEquals(code, 1)
+    assert(err.contains("has no preset 'Nope' (known: "), err)
+    assert(err.contains("Coral"), err)
+    val (c2, _, e2) = go("run", "--model", "lorenz", "--preset", "Any")
+    assertEquals(c2, 1)
+    assert(e2.contains("(it has none)"), e2)
+  }

@@ -45,6 +45,8 @@ object Headless:
       |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum
       |                         (default: lorenz)
       |  --list                 list the models with their parameters and exit
+      |  --preset <name>        start from a preset of the model (see describe); --param
+      |                         values are applied after it
       |  --param <name=value>   override a model parameter (repeatable)
       |  --until <t>            end time (default: 10)
       |  --steps <n>            run n steps instead of up to a time (fixed steps only)
@@ -87,6 +89,7 @@ object Headless:
       replay: Option[Path] = None,
       exactStepping: Option[Stepping] = None,
       list: Boolean = false,
+      preset: Option[String] = None,
       steps: Option[Long] = None,
       events: Vector[ParamEvent] = Vector.empty,
       interventions: Vector[InterventionEvent] = Vector.empty,
@@ -178,6 +181,7 @@ object Headless:
       case Nil => Right(options)
       case "--help" :: _ => Left("help")
       case "--list" :: rest => parse(rest, options.copy(list = true))
+      case "--preset" :: name :: rest => parse(rest, options.copy(preset = Some(name)))
       case "--no-color-bar" :: rest => parse(rest, options.copy(colorBar = false))
       case "--compress" :: rest => parse(rest, options.copy(compress = true))
       case "--model" :: id :: rest => parse(rest, options.copy(model = id))
@@ -273,7 +277,23 @@ object Headless:
       catalog.get(o.model) match
         case None =>
           Left(unknownModel(o.model))
-        case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any, Any]], o, out, err)
+        case Some(found) =>
+          val entry = found.asInstanceOf[Entry[Any, Any]]
+          withPreset(entry, o).flatMap(withPreset => executeEntry(entry, withPreset, out, err))
+
+  /** `o` with the values of its preset below its own `--param` values. */
+  private def withPreset(entry: Entry[Any, Any], o: Options): Either[String, Options] =
+    o.preset match
+      case None => Right(o)
+      case Some(name) =>
+        entry.presets.find(_.name.equalsIgnoreCase(name)) match
+          case Some(preset) => Right(o.copy(params = preset.values ++ o.params))
+          case None =>
+            val known = entry.presets.map(_.name)
+            Left(
+              s"model '${o.model}' has no preset '$name'" +
+                (if known.isEmpty then " (it has none)" else s" (known: ${known.mkString(", ")})")
+            )
 
   private def paramLines(entry: Entry[?, ?]): Vector[String] =
     entry.model.params.specs.toVector.map { p =>

@@ -32,7 +32,7 @@ object Cli:
   private final case class Spec(valued: Set[String], flags: Set[String] = Set.empty):
     def ++(other: Spec): Spec = Spec(valued ++ other.valued, flags ++ other.flags)
 
-  private val model = Spec(Set("--model", "--param", "--seed"))
+  private val model = Spec(Set("--model", "--preset", "--param", "--seed"))
   private val time = Spec(Set("--until", "--steps", "--sample-every", "--dt", "--adaptive"))
   private val image = Spec(Set("--every", "--scale"), Set("--no-color-bar", "--compress"))
 
@@ -66,6 +66,7 @@ object Cli:
   private val Common: String =
     """  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum
       |                         (default: lorenz)
+      |  --preset <name>        start from a preset of the model; --param is applied after it
       |  --param <name=value>   override a model parameter (repeatable)
       |  --seed <n>             run seed (default: 0)
       |  --until <t>            end time (default: 10)
