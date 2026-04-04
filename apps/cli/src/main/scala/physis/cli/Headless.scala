@@ -94,6 +94,7 @@ object Headless:
       exactStepping: Option[Stepping] = None,
       list: Boolean = false,
       preset: Option[String] = None,
+      expectedDigest: Option[Long] = None,
       progress: Boolean = false,
       dryRun: Boolean = false,
       failFast: Boolean = false,
@@ -270,6 +271,7 @@ object Headless:
               steps = m.steps,
               events = m.events,
               interventions = m.interventions,
+              expectedDigest = m.digest,
               frames = options.frames,
               every = options.every,
               scale = options.scale,
@@ -379,13 +381,13 @@ object Headless:
       err: PrintStream
   ): Either[String, Int] =
     val run = build(entry, o, p, probes = true)
-    o.manifest.foreach { path =>
-      val m = run.manifest(o.until)
-      Files.writeString(path, Manifest.toJson(m.copy(steps = o.steps)), StandardCharsets.UTF_8)
-    }
     val result = o.steps match
       case Some(n) => run.runSteps(n)
       case None => run.runUntil(o.until)
+    o.manifest.foreach { path =>
+      val m = run.manifest(o.until).copy(steps = o.steps, digest = Some(result.finalDigest))
+      Files.writeString(path, Manifest.toJson(m), StandardCharsets.UTF_8)
+    }
     val names = result.series.keys.toVector
     out.println(("t" +: names).mkString(","))
     result.times.indices.foreach { i =>
@@ -396,7 +398,17 @@ object Headless:
       f"# model ${o.model}, t = ${result.finalTime}%s, accepted ${result.acceptedSteps}%d, " +
         f"rejected ${result.rejectedSteps}%d, final digest ${result.finalDigest}%016x"
     )
-    Right(0)
+    Right(digestCheck(o, result.finalDigest, err))
+
+  /** 0, or 1 and a message when a replay did not end at the digest the manifest recorded. */
+  private def digestCheck(o: Options, digest: Long, err: PrintStream): Int =
+    o.expectedDigest match
+      case Some(expected) if expected != digest =>
+        err.println(
+          f"# digest DIFFERS: the replay ended at $digest%016x, the manifest recorded $expected%016x"
+        )
+        1
+      case _ => 0
 
   /** Numbered PNGs of the model's view, printed one path per line. */
   private def frames(
@@ -425,7 +437,7 @@ object Headless:
           val last = Frames.frame(Frames.snapshot(run, image.exporter), image.view, options)
           val range = last.fold("")(f => s", colours of the last frame from ${f.lo} to ${f.hi}")
           err.println(s"# ${files.size} frames of ${o.model} in $dir, $steps steps$range")
-          0
+          digestCheck(o, run.digest, err)
         }
       }
     }
