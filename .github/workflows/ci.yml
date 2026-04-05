@@ -42,6 +42,25 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew spotlessCheck build --continue --stacktrace 2>&1 | tee build.log
+      - name: Run the installed physis-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :apps:cli:installDist
+          cli="$PWD/apps/cli/build/install/physis-cli/bin/physis-cli"
+          work="$(mktemp -d)"
+          cd "$work"
+          "$cli" --version | grep -q '^physis-cli '
+          "$cli" describe physarum | grep -q '^presets:'
+          "$cli" sweep --model gray-scott --param nx=32 --param ny=32 \
+            --sweep F=0.03,0.05 --until 20 --out sweep.csv --manifests manifests
+          test "$(wc -l < sweep.csv)" -eq 3
+          first="$(ls manifests/point-*.json | head -n 1)"
+          "$cli" replay "$first" > /dev/null
+          "$cli" frames frames --model physarum --param n=500 --param nx=64 --param ny=64 \
+            --steps 10 --every 10 > /dev/null
+          test "$(head -c 8 frames/frame-00001.png | od -An -tx1 | tr -d ' \n')" = "89504e470d0a1a0a"
+          if "$cli" run --sweep x=1 2> /dev/null; then echo "a wrong command line was accepted"; exit 1; fi
       - name: Report build errors as annotations
         if: failure()
         shell: bash
