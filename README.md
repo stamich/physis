@@ -17,7 +17,9 @@ you can paint into a running model with the mouse, and the strokes are recorded 
 so that a painted session still replays bit for bit. Milestone 0.5 adds **Physarum** (agents that
 lay and follow a trail, the first model where agents and a field act on each other), **parameter
 sweeps** that run a grid of whole runs on all cores with the same results for any number of
-threads, and **image export** with an own PNG writer: frames, montages and File → Save image.
+threads, and **image export** with an own PNG writer: frames, montages and File → Save image. Milestone
+0.5.1 adds **physis-cli**, the command line (`apps/cli`) for runs, frames, sweeps, montages and
+replays with a digest check.
 
 ## Modules
 
@@ -36,7 +38,8 @@ threads, and **image export** with an own PNG writer: frames, montages and File 
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
-| `examples` | `RunHeadless`: run a model from the command line, print CSV, write and replay manifests |
+| `apps/cli` | `physis-cli`: run, frames, sweep, montage, replay, list and describe, without a window |
+| `examples` | `RunHeadless`: the options of 0.5 without commands, kept as an example |
 
 Live runs (`physis.core.live`) drive a run from a simulation thread against wall-clock time and
 publish snapshots through a lock-free triple buffer; parameter changes are recorded as
@@ -54,24 +57,27 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
-./gradlew :examples:run --args="--model lorenz --until 20 --sample-every 0.05"
+./gradlew :apps:cli:run --args="run --model lorenz --until 20 --sample-every 0.05"
 
 # Gray–Scott on 64 x 64 and Boids as CSV: a first look without a window
-./gradlew :examples:run --args="--model gray-scott --param nx=64 --param ny=64 --until 3000 --sample-every 500"
-./gradlew :examples:run --args="--model boids --param n=500 --until 10 --sample-every 1"
+./gradlew :apps:cli:run --args="run --model gray-scott --preset Coral --param nx=64 --param ny=64 --until 3000 --sample-every 500"
+./gradlew :apps:cli:run --args="run --model boids --param n=500 --until 10 --sample-every 1"
 
 # A 5 x 5 patch of the Gray–Scott map as one picture, and Physarum frames
-./gradlew :examples:run --args="--model gray-scott --until 8000 --param nx=128 --param ny=128 --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5 --montage map.png"
-./gradlew :examples:run --args="--model physarum --steps 600 --frames out --every 60 --scale 3"
+./gradlew :apps:cli:run --args="montage map.png --model gray-scott --until 8000 --param nx=128 --param ny=128 --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5"
+./gradlew :apps:cli:run --args="frames out --model physarum --steps 600 --every 60 --scale 3"
 
 # Chaotic double pendulum with adaptive steps; save the manifest, then replay it
-./gradlew :examples:run --args="--model double-pendulum --adaptive 1e-9 --until 10 --manifest run.json"
-./gradlew :examples:run --args="--replay run.json"
+./gradlew :apps:cli:run --args="run --model double-pendulum --adaptive 1e-9 --until 10 --manifest run.json"
+./gradlew :apps:cli:run --args="replay run.json"
 ```
 
-`run.json` must be given as an absolute path, or relative to the `examples` directory, because
-Gradle runs the example from there. The replay prints the same CSV and, on standard error, the
-same final state digest.
+`run.json` must be given as an absolute path, or relative to the `apps/cli` directory, because
+Gradle runs the application from there. The replay prints the same CSV and, on standard error,
+the same final state digest, and exits with 1 if the digest recorded in the manifest differs.
+`./gradlew :apps:cli:installDist` builds the `physis-cli` start script in
+`apps/cli/build/install/physis-cli/bin`, which can be run from any directory; see
+[docs/cli.md](docs/cli.md).
 
 In code:
 

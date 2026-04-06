@@ -2,6 +2,47 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.5.1 — physis-cli
+
+Patch release: the command line that 0.5 left in `examples`, tests that no longer fail on a loaded
+machine, and speed bars set from what CI measured. No model changed and no digest changed.
+
+### Added
+
+- **physis-cli** (`apps/cli`): `run`, `frames <dir>`, `sweep`, `montage <png>`, `replay <manifest>`,
+  `list` and `describe <model>`, with `--help` for every command and `--version`. A command
+  knows which options belong to it, and exit codes are 0 (done), 1 (the run failed) and 2 (wrong
+  command line); [docs/cli.md](docs/cli.md). `./gradlew :apps:cli:installDist` makes the
+  `physis-cli` start script, which CI runs from an empty directory.
+- `--preset <name>` for run, frames and sweep (Gray–Scott, Boids and Physarum have presets).
+- Sweeps: `# done/total` on standard error (`--quiet` turns it off), `--dry-run` (the axes and the
+  number of points, nothing run) and `--fail-fast` (every point checked against the schema and the
+  model's limits first). Manifests written by a sweep carry the digest of their point.
+- Replay checks the digest recorded in the manifest and exits with 1 and a message when it
+  differs; `run --manifest` now writes its manifest after the run, with the digest.
+- **verify**: `SpeedReport`; the slow-tests job prints the measured speeds in the job summary and
+  as an annotation.
+
+### Changed
+
+- `RunHeadless` in `examples` is a thin wrapper around `physis.cli.Headless`; its options and
+  output are those of 0.5.
+- The publishing-gap test of `LiveRunSuite` and the Boids throughput test take the best of several
+  windows instead of one (they failed on loaded runners after the 0.5 merge; separate PR).
+- Speed bars from CI: Physarum 12 million agent steps per second on 512 × 512, best of five
+  windows (CI measured 31.5 on one run and 16.1 on another, so the 0.5 plan's 25 would have
+  failed), sweep scaling 1.5 with 4 threads (measured 2.07 and 2.04; the 0.5 plan had 2.5), PNG
+  512 × 512 under 30 ms (measured 0.9 and 1.6 ms).
+
+### Differences from the 0.5.1 plan
+
+- T4 and T5 changed places: the module and the move of the engine come first, then the commands.
+- The command is `physis-cli`; `--fail-fast` checks the points before running any, it does not
+  stop a sweep that has started.
+- Not done: `--format png` for frames (PNG is the only format), an estimated run time in
+  `--dry-run`, interventions on the command line.
+- The test of the documentation runs the examples of `docs/cli.md` only.
+
 ## 0.5.0 — agents in fields, export and sweeps
 
 Fifth milestone: a model where agents and a field act on each other, runs in bulk, and pictures

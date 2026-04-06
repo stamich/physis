@@ -1,7 +1,7 @@
 # Sweeps
 
 A sweep runs a model once for every point of a grid of parameters and reports one row per point.
-It lives in `physis.core.sweep` and is used by `RunHeadless --sweep` (see [cli.md](cli.md)).
+It lives in `physis.core.sweep` and is used by `physis-cli sweep` and `physis-cli montage` (see [cli.md](cli.md)).
 
 ## Grid
 
@@ -24,7 +24,7 @@ pool of daemon threads. Runs share nothing, so the answer does not depend on the
 threads or on which run finishes first: **results come back in grid order, with the same digests
 for 1 or 16 threads**. A point that fails (a parameter the model refuses) is reported at its
 point and does not stop the others. `extract` reads more from a finished run on its own thread,
-such as a final field or an image. A sweep with 4 threads is checked to be at least 1.8 times
+such as a final field or an image. A sweep with 4 threads is checked to be at least 1.5 times
 faster than with 1 (slow test).
 
 ## Output
@@ -43,9 +43,9 @@ a gap between them, the last axis along a row. A failed point leaves its tile em
 ## Example
 
 ```bash
-./gradlew :examples:run --args="--model gray-scott --until 8000 \
+physis-cli montage map.png --model gray-scott --until 8000 \
   --param nx=128 --param ny=128 --param noise=0 \
-  --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5 --out map.csv --montage map.png"
+  --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5 --out map.csv
 ```
 
 A slow test (`MapSuite`) classifies this same 5 × 5 patch of Pearson's map (extinct, a few spots,
