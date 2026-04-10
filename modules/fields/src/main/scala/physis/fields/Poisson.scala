@@ -100,7 +100,7 @@ final class Poisson(
     active = count
 
   /** Writes the halo of `q` that the operator reads: wrapped, or 0 beyond a border. */
-  private def fillHalo(q: Field2D): Unit =
+  def fillHalo(q: Field2D): Unit =
     var j = 0
     while j < ny do
       q(-1, j) = if wrapX then q(nx - 1, j) else 0.0
