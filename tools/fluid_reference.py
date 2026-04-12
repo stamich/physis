@@ -132,7 +132,7 @@ class Fluid:
             + ov[1:, :] * (q - up)
         )
 
-    def solve(self, b, tol=1e-9, max_iter=400):
+    def solve(self, b, tol=1e-9, max_iter=1000):
         q = self.p
         mask = self.unknown
         singular = (not self.outflow) or self.wrap
@@ -303,6 +303,35 @@ def run_taylor_green():
     print("decay", np.log(e0 / f.kinetic_energy()), "expected", 4 * nu * k * k * 100 * DT)
 
 
+def wake(nx=160, ny=64, d=14.0, re=150.0, steps=3000, offset=0.3):
+    """Flow past a cylinder of diameter d in a channel (inflow 1): the probe is the vertical
+    velocity at the middle of the grid, as in Fluid.shed. Returns (amplitude, Strouhal number).
+
+    The cylinder sits at x = 0.2 nx and a little off the axis (the staircase circle is exactly
+    symmetric otherwise, and the street would take very long to start). The Strouhal number is
+    d / period of the probe, over the second half of the run."""
+    f = Fluid(nx, ny, CHANNEL, viscosity=d / re, inflow=1.0)
+    cx, cy, r = nx * 0.2, ny / 2 + offset, d / 2
+    f.solid[:] = ((f.cx - cx) ** 2 + (f.cy - cy) ** 2) <= r * r
+    f.configure()
+    i, j = nx // 2, ny // 2
+    signal = []
+    for s in range(1, steps + 1):
+        f.step()
+        signal.append(0.5 * (f.v[j, i] + f.v[j + 1, i]))
+        if s % 500 == 0:
+            print(f"step {s:6d}  probe {signal[-1]:+.4f}  cg {f.iterations}", file=sys.stderr)
+    half = np.array(signal[steps // 2:])
+    rises = np.where(np.diff(np.sign(half - half.mean())) > 0)[0]
+    period = np.mean(np.diff(rises)) * DT
+    return np.ptp(half), d / period, len(rises)
+
+
+def run_wake():
+    amplitude, strouhal, rises = wake()
+    print(f"amplitude {amplitude:.3f}  Strouhal number {strouhal:.4f}  ({rises} periods counted)")
+
+
 if __name__ == "__main__":
     what = sys.argv[1] if len(sys.argv) > 1 else "cavity"
-    {"cavity": run_cavity, "taylor-green": run_taylor_green}[what]()
+    {"cavity": run_cavity, "taylor-green": run_taylor_green, "wake": run_wake}[what]()

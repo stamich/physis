@@ -316,6 +316,15 @@ final class FluidState(val mac: MacGrid, val edge: Int):
   /** Total amount of dye. */
   def dyeMass: Double = dye.sum * mac.cells.h * mac.cells.h
 
+  /**
+   * The vertical velocity at the middle of the grid, the wake probe: behind an obstacle on the
+   * left, a steady wake leaves it at 0 and a street of vortices makes it swing to and fro.
+   */
+  def shed: Double =
+    val i = nx / 2
+    val j = ny / 2
+    0.5 * (v(i, j) + v(i, j + 1))
+
 /**
  * Incompressible flow on a staggered (MAC) grid with unit cells, advanced with the fixed step
  * [[Dt]] by the stable-fluids scheme: semi-Lagrangian advection (second-order backtrace),
@@ -345,7 +354,7 @@ object Fluid extends Model[FluidParams]:
   val Tolerance: Double = 1e-9
 
   /** Solver iterations after which a projection gives up. */
-  val MaxIterations: Int = 400
+  val MaxIterations: Int = 1000
 
   override def check(p: FluidParams, stepping: Stepping): Either[String, Unit] =
     stepping match
@@ -397,4 +406,8 @@ object Fluid extends Model[FluidParams]:
   /** Total amount of dye. */
   val dyeMass: Probe[FluidState] = Probe[FluidState]("dye_mass")((s, _) => s.dyeMass)
 
-  val probes: Vector[Probe[FluidState]] = Vector(kineticEnergy, maxDivergence, enstrophy, dyeMass)
+  /** Vertical velocity at the middle of the grid: it swings when vortices are shed. */
+  val shedding: Probe[FluidState] = Probe[FluidState]("shedding", "cells/t")((s, _) => s.shed)
+
+  val probes: Vector[Probe[FluidState]] =
+    Vector(kineticEnergy, maxDivergence, enstrophy, dyeMass, shedding)
