@@ -3,7 +3,8 @@ package physis.models.fluid
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
-import physis.fields.{Advect, Boundaries, Field2D, Mac, MacGrid, Mask, Projection}
+import physis.core.run.{Disc, Intervention, Op}
+import physis.fields.{Advect, Boundaries, Brush, Field2D, Mac, MacGrid, Mask, Projection, Pulse}
 
 /**
  * Parameters of the flow.
@@ -294,6 +295,76 @@ final class FluidState(val mac: MacGrid, val edge: Int):
     iterations = projection.project(u, v, Fluid.Tolerance, Fluid.MaxIterations)
     clearDyeInWalls()
 
+  /**
+   * Paints walls or dye, see [[Fluid.intervene]]. New walls stop the flow through their faces at
+   * once and remove the dye inside; erased walls leave the fluid at rest where they were.
+   */
+  def applyBrush(target: String, disc: Disc, op: Op, value: Double): Unit =
+    target match
+      case "wall" =>
+        val _ = wall.paint(disc, periodic, periodic, op, value)
+        wallsChanged()
+        projection.closeFaces(u, v)
+        clearDyeInWalls()
+      case _ =>
+        val _ = Brush(dye, disc, periodic, periodic, op, value)
+        clearDyeInWalls()
+
+  /**
+   * Adds a Gaussian impulse of the horizontal (`"u"`) or vertical (`"v"`) velocity, or a puff of
+   * dye (`"dye"`), centred at `(x, y)` in cell coordinates. The impulse is not free of
+   * divergence; the next projection removes the part that is not a swirl.
+   */
+  def applyPulse(target: String, x: Double, y: Double, sigma: Double, amplitude: Double): Unit =
+    target match
+      case "u" => stampFaces(u, projection.poisson.openU, 0.0, 0.5, x, y, sigma, amplitude)
+      case "v" => stampFaces(v, projection.poisson.openV, 0.5, 0.0, x, y, sigma, amplitude)
+      case _ =>
+        val _ = Pulse.stamp(dye, x, y, sigma, amplitude, periodic, periodic)
+        clearDyeInWalls()
+
+  /**
+   * Adds the Gaussian to the open faces of `f`, whose samples sit at `(i + ox, j + oy)`. A face
+   * is stamped with its own cell; the face on the far border is stamped with the last cell, and
+   * on a periodic axis it is a copy of the first.
+   */
+  private def stampFaces(
+      f: Field2D,
+      open: Field2D,
+      ox: Double,
+      oy: Double,
+      x: Double,
+      y: Double,
+      sigma: Double,
+      amplitude: Double
+  ): Unit =
+    val k = -1.0 / (2.0 * sigma * sigma)
+    val lastColumn = ox == 0.0
+    Brush.foreachCellAt(mac.cells, x, y, Pulse.Reach * sigma, periodic, periodic) { (i, j) =>
+      var dx = i + ox - x
+      var dy = j + oy - y
+      if periodic then
+        dx -= nx * math.rint(dx / nx)
+        dy -= ny * math.rint(dy / ny)
+      if open(i, j) != 0.0 then f(i, j) += amplitude * math.exp(k * (dx * dx + dy * dy))
+      if !periodic then
+        if lastColumn && i == nx - 1 && open(nx, j) != 0.0 then
+          val ex = nx - x
+          f(nx, j) += amplitude * math.exp(k * (ex * ex + dy * dy))
+        if !lastColumn && j == ny - 1 && open(i, ny) != 0.0 then
+          val ey = ny - y
+          f(i, ny) += amplitude * math.exp(k * (dx * dx + ey * ey))
+    }
+    if periodic then
+      var a = 0
+      while a < ny do
+        u(nx, a) = u(0, a)
+        a += 1
+      var b = 0
+      while b < nx do
+        v(b, ny) = v(b, 0)
+        b += 1
+
   /** Kinetic energy `½ ∫ |velocity|²`. */
   def kineticEnergy: Double = Mac.kineticEnergy(u, v, mac.cells)
 
@@ -390,6 +461,29 @@ object Fluid extends Model[FluidParams]:
         state.dye.digestInto(state.v.digestInto(state.u.digestInto(Digest.start)))
       )
     )
+
+  override def accepts(iv: Intervention): Either[String, Unit] = iv match
+    case Intervention.Brush("wall" | "dye", _, _, _) => Right(())
+    case Intervention.Pulse("u" | "v" | "dye", _, _, _, _) => Right(())
+    case Intervention.Brush(target, _, _, _) =>
+      Left(s"fluid has no field '$target' to paint (use 'wall' or 'dye')")
+    case Intervention.Pulse(target, _, _, _, _) =>
+      Left(s"fluid has no field '$target' to pulse (use 'u', 'v' or 'dye')")
+    case _: Intervention.Disturb => Left("fluid has no agents to disturb")
+
+  override def intervene(
+      state: FluidState,
+      p: FluidParams,
+      iv: Intervention
+  ): Either[String, Unit] =
+    accepts(iv).map { _ =>
+      iv match
+        case Intervention.Brush(target, disc, op, value) =>
+          state.applyBrush(target, disc, op, value)
+        case Intervention.Pulse(target, x, y, sigma, amplitude) =>
+          state.applyPulse(target, x, y, sigma, amplitude)
+        case _ => ()
+    }
 
   /** Kinetic energy of the flow. */
   val kineticEnergy: Probe[FluidState] =
