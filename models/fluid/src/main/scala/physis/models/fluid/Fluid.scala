@@ -1,6 +1,7 @@
 package physis.models.fluid
 
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
+import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
 import physis.core.run.{Disc, Intervention, Op}
@@ -365,6 +366,27 @@ final class FluidState(val mac: MacGrid, val edge: Int):
         v(b, ny) = v(b, 0)
         b += 1
 
+  /** Writes the vorticity `∂v/∂x - ∂u/∂y` at the cell centres, row by row, from `offset`. */
+  def vorticityInto(out: Array[Double], offset: Int): Unit =
+    Mac.vorticity(u, v, scratchC, periodic, periodic)
+    scratchC.copyInteriorInto(out, offset)
+
+  /** Writes the speed at the cell centres, row by row, from `offset`. */
+  def speedInto(out: Array[Double], offset: Int): Unit =
+    val f = u
+    val g = v
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val a = 0.5 * (f(i, j) + f(i + 1, j))
+        val b = 0.5 * (g(i, j) + g(i, j + 1))
+        out(k) = math.sqrt(a * a + b * b)
+        k += 1
+        i += 1
+      j += 1
+
   /** Kinetic energy `½ ∫ |velocity|²`. */
   def kineticEnergy: Double = Mac.kineticEnergy(u, v, mac.cells)
 
@@ -395,6 +417,28 @@ final class FluidState(val mac: MacGrid, val edge: Int):
     val i = nx / 2
     val j = ny / 2
     0.5 * (v(i, j) + v(i, j + 1))
+
+object FluidState:
+  /** Live runs export the dye, the vorticity, the speed and the wall mask, each of the grid's size. */
+  given stateExport: StateExport[FluidState] with
+    def size(state: FluidState): Int = 4 * state.mac.cells.cells
+
+    def copyInto(state: FluidState, out: Array[Double]): Unit =
+      val n = state.mac.cells.cells
+      state.dye.copyInteriorInto(out, 0)
+      state.vorticityInto(out, n)
+      state.speedInto(out, 2 * n)
+      state.wall.field.copyInteriorInto(out, 3 * n)
+
+    override def layout(state: FluidState): IndexedSeq[Slice] =
+      val g = state.mac.cells
+      val n = g.cells
+      Vector(
+        Slice("dye", 0, g.nx, g.ny),
+        Slice("vorticity", n, g.nx, g.ny),
+        Slice("speed", 2 * n, g.nx, g.ny),
+        Slice("wall", 3 * n, g.nx, g.ny)
+      )
 
 /**
  * Incompressible flow on a staggered (MAC) grid with unit cells, advanced with the fixed step
