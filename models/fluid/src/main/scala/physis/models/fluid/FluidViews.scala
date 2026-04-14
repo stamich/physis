@@ -53,5 +53,8 @@ object FluidViews:
   /** The dye above, the plots below. */
   val default: View = View.Layout(Seq(dye, plots), Direction.Vertical)
 
+  /** What the Lab shows: the dye with the tracers over it above, the plots below. */
+  val lab: View = View.Layout(Seq(dyeWithTracers, plots), Direction.Vertical)
+
   /** The vorticity above, the plots below. */
   val swirl: View = View.Layout(Seq(vorticity, plots), Direction.Vertical)

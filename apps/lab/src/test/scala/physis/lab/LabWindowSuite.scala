@@ -36,6 +36,35 @@ class CatalogSuite extends munit.FunSuite:
       assert(iv.isInstanceOf[Intervention.Brush])
   }
 
+  test("the fluid offers smoke, pushes and walls whose strokes the model accepts") {
+    import physis.core.run.{Intervention, Physis}
+    import physis.models.fluid.Fluid
+    assertEquals(
+      Catalog.fluid.tools.map(_.spec.name),
+      Vector("Smoke", "Push sideways", "Push up", "Wall", "Erase wall")
+    )
+    assert(Catalog.fluid.wraps(Map("edge" -> 0.0)))
+    assert(!Catalog.fluid.wraps(Map("edge" -> 1.0)))
+    val run = Physis
+      .model(Fluid)
+      .stepping(Fluid.stepping)
+      .overrides(Map("nx" -> 64.0, "ny" -> 64.0))
+      .build()
+    for tool <- Catalog.fluid.tools; secondary <- Seq(false, true) do
+      val iv = tool.make(physis.view.Dab(10.0, 12.0), 5.0, 1.0, secondary)
+      assert(run.intervene(iv).isRight, s"${tool.spec.name}: $iv")
+    val pushes = Catalog.fluid.tools.filter(_.spec.name.startsWith("Push")).map(_.make(
+      physis.view.Dab(1.0, 1.0),
+      5.0,
+      1.0,
+      true
+    ))
+    pushes.foreach {
+      case Intervention.Pulse(_, _, _, _, amplitude) => assert(amplitude < 0.0)
+      case other => fail(s"not a pulse: $other")
+    }
+  }
+
   test("the Lorenz view stacks the attractor above the coordinates") {
     Catalog.lorenz.open(1L, startPaused = true).view match
       case View.Layout(Seq(_: View.Trajectory, _: View.Plot), Direction.Vertical) => ()

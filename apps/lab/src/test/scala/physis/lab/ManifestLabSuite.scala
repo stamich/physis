@@ -108,6 +108,35 @@ class LabManifestsSuite extends munit.FunSuite:
     finally live.stop()
   }
 
+  test("smoke, a push and a wall in the fluid replay headless to the same digest") {
+    import physis.core.run.{Disc, Intervention, Op}
+    val live = Catalog.fluid.open(seed = 3L, startPaused = true).live
+    live.start()
+    try
+      def steps(n: Int): Unit = for _ <- 1 to n do live.send(Command.StepOnce)
+      steps(5)
+      live.send(Command.Intervene(Intervention.Brush("dye", Disc(60.0, 40.0, 8.0), Op.Assign, 1.0)))
+      live.send(Command.Intervene(Intervention.Pulse("u", 50.0, 40.0, 3.0, 1.5)))
+      steps(20)
+      live.send(Command.SetParams(Map("viscosity" -> 0.05)))
+      live.send(Command.Intervene(Intervention.Brush(
+        "wall",
+        Disc(90.0, 40.0, 5.0),
+        Op.Assign,
+        1.0
+      )))
+      steps(15)
+      awaitSteps(live, 40L)
+      val file = Files.createTempFile("physis-lab-fluid", ".json")
+      val saved = LabManifests.save(live, file).fold(e => fail(e), identity)
+      assertEquals(saved.interventions.size, 3)
+      val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+      assertEquals(report.steps, 40L)
+      assertEquals(report.matches, Some(true), report.summary)
+      Files.delete(file)
+    finally live.stop()
+  }
+
   test("food and trail strokes in Physarum replay headless to the same digest") {
     import physis.core.run.{Disc, Intervention, Op}
     val live = Catalog.physarum.open(seed = 5L, startPaused = true).live
