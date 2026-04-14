@@ -23,7 +23,8 @@ class FluidWakeSuite extends munit.FunSuite:
       inflow = 1.0,
       edge = FluidEdge.Channel,
       nx = Nx,
-      ny = Ny
+      ny = Ny,
+      tracers = 0
     )
     val r = Physis
       .model(Fluid)

@@ -31,7 +31,8 @@ class FluidCavitySuite extends munit.FunSuite:
       inflow = 0.0,
       edge = FluidEdge.Box,
       nx = n,
-      ny = n
+      ny = n,
+      tracers = 0
     )
     val r = Physis
       .model(Fluid)

@@ -48,7 +48,8 @@ object FluidPresets:
       "inflow" -> 0.0,
       "edge" -> 1.0,
       "nx" -> 64.0,
-      "ny" -> 64.0
+      "ny" -> 64.0,
+      "tracers" -> 1500.0
     ),
     (nx, ny) =>
       Vector(0.25, 0.5, 0.75).flatMap(f =>
@@ -67,7 +68,8 @@ object FluidPresets:
       "inflow" -> 1.0,
       "edge" -> 2.0,
       "nx" -> 192.0,
-      "ny" -> 72.0
+      "ny" -> 72.0,
+      "tracers" -> 3000.0
     ),
     (nx, ny) =>
       // a little off the axis, so that the street starts soon
@@ -103,7 +105,8 @@ object FluidPresets:
       "inflow" -> 0.0,
       "edge" -> 0.0,
       "nx" -> 128.0,
-      "ny" -> 128.0
+      "ny" -> 128.0,
+      "tracers" -> 3000.0
     ),
     (nx, ny) =>
       Vector(

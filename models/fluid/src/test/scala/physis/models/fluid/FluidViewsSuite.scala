@@ -20,6 +20,17 @@ class FluidViewsSuite extends munit.FunSuite:
     assertEquals(FluidViews.dye.range, ValueRange.Fixed(0.0, 1.0))
   }
 
+  test("the tracers are drawn as dots over a heatmap, from the slices x and y") {
+    FluidViews.dyeWithTracers match
+      case View.Layers(base, dots) =>
+        assertEquals(base.slice, "dye")
+        assertEquals((dots.x, dots.y), ("x", "y"))
+      case other => fail(s"expected layers, got $other")
+    val withDots = run(params(FluidEdge.Box, 16, 16, tracers = 3))
+    val sliceNames = FluidState.stateExport.layout(withDots.state).map(_.name)
+    assert(sliceNames.contains("x") && sliceNames.contains("y"))
+  }
+
   test("the plots read the probes they name") {
     assertEquals(Fluid.probes(0).name, "kinetic_energy")
     assertEquals(Fluid.probes(2).name, "enstrophy")

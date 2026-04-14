@@ -1,6 +1,6 @@
 package physis.models.fluid
 
-import physis.view.{Channel, Colormap, Direction, ValueRange, View}
+import physis.view.{Channel, Colormap, Direction, Dots, ValueRange, View}
 
 /** How Physis Lab draws the fluid. Plain data from physis-view; no toolkit. */
 object FluidViews:
@@ -40,6 +40,15 @@ object FluidViews:
 
   /** The two plots side by side. */
   val plots: View = View.Layout(Seq(energyPlot, enstrophyPlot), Direction.Horizontal)
+
+  /** The tracer particles drawn as faint white dots over a heatmap. */
+  def withTracers(base: View.Heatmap): View = View.Layers(base, Dots("x", "y", 0xffffffff, 110))
+
+  /** The vorticity with the tracers over it. */
+  val swirlWithTracers: View = withTracers(vorticity)
+
+  /** The dye with the tracers over it. */
+  val dyeWithTracers: View = withTracers(dye)
 
   /** The dye above, the plots below. */
   val default: View = View.Layout(Seq(dye, plots), Direction.Vertical)

@@ -19,8 +19,10 @@ object FluidSupport:
       dyeDiffusion: Double = 0.0,
       buoyancy: Double = 0.0,
       lid: Double = 0.0,
-      inflow: Double = 0.0
-  ): FluidParams = FluidParams(viscosity, dyeDiffusion, buoyancy, lid, inflow, edge, nx, ny)
+      inflow: Double = 0.0,
+      tracers: Int = 0
+  ): FluidParams =
+    FluidParams(viscosity, dyeDiffusion, buoyancy, lid, inflow, edge, nx, ny, tracers)
 
   /**
    * Sets a periodic Taylor-Green vortex of speed `speed` and one wavelength per domain, from a

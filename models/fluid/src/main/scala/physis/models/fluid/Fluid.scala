@@ -1,11 +1,23 @@
 package physis.models.fluid
 
+import physis.agents.ParticleSet
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
 import physis.core.run.{Disc, Intervention, Op}
-import physis.fields.{Advect, Boundaries, Brush, Field2D, Mac, MacGrid, Mask, Projection, Pulse}
+import physis.fields.{
+  Advect,
+  Boundaries,
+  Brush,
+  Field2D,
+  Mac,
+  MacGrid,
+  Mask,
+  Projection,
+  Pulse,
+  Sampler
+}
 
 /**
  * Parameters of the flow.
@@ -18,6 +30,7 @@ import physis.fields.{Advect, Boundaries, Brush, Field2D, Mac, MacGrid, Mask, Pr
  * @param edge         the border (needs a restart): 0 periodic, 1 closed box, 2 channel
  * @param nx           grid columns (needs a restart)
  * @param ny           grid rows (needs a restart)
+ * @param tracers      particles carried by the flow, to show where it goes (needs a restart)
  */
 final case class FluidParams(
     viscosity: Double,
@@ -27,7 +40,8 @@ final case class FluidParams(
     inflow: Double,
     edge: Int,
     nx: Int,
-    ny: Int
+    ny: Int,
+    tracers: Int
 )
 
 object FluidParams:
@@ -74,7 +88,15 @@ object FluidParams:
       restart = true
     ),
     ParamSpec("nx", default = 128, min = 16, max = 512, doc = "Grid columns", restart = true),
-    ParamSpec("ny", default = 128, min = 16, max = 512, doc = "Grid rows", restart = true)
+    ParamSpec("ny", default = 128, min = 16, max = 512, doc = "Grid rows", restart = true),
+    ParamSpec(
+      "tracers",
+      default = 0,
+      min = 0,
+      max = 20000,
+      doc = "Particles carried by the flow",
+      restart = true
+    )
   )
 
 /** The borders of [[FluidParams.edge]]. */
@@ -88,7 +110,7 @@ object FluidEdge:
  * two copies that take turns as source and destination of the advection (swapped by reference,
  * never copied), the wall mask and the projection with its pressure.
  */
-final class FluidState(val mac: MacGrid, val edge: Int):
+final class FluidState(val mac: MacGrid, val edge: Int, tracerCount: Int):
   private val nx = mac.nx
   private val ny = mac.ny
 
@@ -115,6 +137,13 @@ final class FluidState(val mac: MacGrid, val edge: Int):
 
   /** The projection, which owns the pressure. */
   val projection: Projection = new Projection(mac, periodic, periodic, outflow)
+
+  /** The tracer particles (columns `x` and `y`, in cells), or none. */
+  val particles: Option[ParticleSet] =
+    if tracerCount > 0 then Some(ParticleSet(tracerCount, "x", "y")) else None
+
+  private val tx: Array[Double] = particles.fold(new Array[Double](0))(_.column("x"))
+  private val ty: Array[Double] = particles.fold(new Array[Double](0))(_.column("y"))
 
   /** Solver iterations of the latest step. */
   var iterations: Int = 0
@@ -276,7 +305,7 @@ final class FluidState(val mac: MacGrid, val edge: Int):
    * [[Fluid.MaxCellsPerStep]] cells per step, so that a hand-painted burst cannot throw the
    * backtrace across the whole grid.
    */
-  def step(p: FluidParams, dt: Double): Unit =
+  def step(p: FluidParams, dt: Double, stepNumber: Long): Unit =
     applyBoundaries(p)
     lift(p, dt)
     val limit = Fluid.MaxCellsPerStep / dt
@@ -295,6 +324,7 @@ final class FluidState(val mac: MacGrid, val edge: Int):
     applyBoundaries(p)
     iterations = projection.project(u, v, Fluid.Tolerance, Fluid.MaxIterations)
     clearDyeInWalls()
+    moveTracers(dt, stepNumber)
 
   /**
    * Paints walls or dye, see [[Fluid.intervene]]. New walls stop the flow through their faces at
@@ -387,6 +417,63 @@ final class FluidState(val mac: MacGrid, val edge: Int):
         i += 1
       j += 1
 
+  /** A number in [0, 1) that depends only on `a`: the finaliser of splitmix64, plain arithmetic. */
+  private def unit(a: Long): Double =
+    var z = a + 0x9e3779b97f4a7c15L
+    z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L
+    z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL
+    z = z ^ (z >>> 31)
+    (z >>> 11).toDouble * (1.0 / 9007199254740992.0)
+
+  /** Puts tracer `k` at a place that depends on `k` and the step only. */
+  private def respawn(k: Int, stepNumber: Long): Unit =
+    val base = stepNumber * 1000003L + k.toLong * 2L
+    // the inflow of a channel feeds in at its left end; elsewhere a lost tracer starts anew
+    val width = if outflow then 2.0 else nx.toDouble
+    tx(k) = unit(base) * width
+    ty(k) = unit(base + 1L) * ny
+
+  private def solidAt(x: Double, y: Double): Boolean =
+    wall(math.min(nx - 1, math.max(0, x.toInt)), math.min(ny - 1, math.max(0, y.toInt)))
+
+  /**
+   * Carries the tracers with the flow by a midpoint step. One that leaves the open end of a
+   * channel, or sits in a wall, starts anew; one that would enter a wall stays where it is.
+   */
+  private def moveTracers(dt: Double, stepNumber: Long): Unit =
+    val f = u
+    val g = v
+    var k = 0
+    while k < tx.length do
+      val x = tx(k)
+      val y = ty(k)
+      if solidAt(x, y) then respawn(k, stepNumber)
+      else
+        val mx = x + 0.5 * dt * Sampler.bilinearAt(f, x, y, 0.0, 0.5, nx, ny, periodic, periodic)
+        val my = y + 0.5 * dt * Sampler.bilinearAt(g, x, y, 0.5, 0.0, nx, ny, periodic, periodic)
+        var px = x + dt * Sampler.bilinearAt(f, mx, my, 0.0, 0.5, nx, ny, periodic, periodic)
+        var py = y + dt * Sampler.bilinearAt(g, mx, my, 0.5, 0.0, nx, ny, periodic, periodic)
+        if periodic then
+          px -= nx * math.floor(px / nx)
+          py -= ny * math.floor(py / ny)
+        if outflow && px >= nx then respawn(k, stepNumber)
+        else
+          if !periodic then
+            px = math.min(math.max(px, 0.0), nx - 1e-6)
+            py = math.min(math.max(py, 0.0), ny - 1e-6)
+          if !solidAt(px, py) then
+            tx(k) = px
+            ty(k) = py
+      k += 1
+
+  /** Scatters the tracers over the grid. */
+  def seedTracers(rng: SplittableRng): Unit =
+    var k = 0
+    while k < tx.length do
+      tx(k) = rng.nextDouble() * nx
+      ty(k) = rng.nextDouble() * ny
+      k += 1
+
   /** Kinetic energy `½ ∫ |velocity|²`. */
   def kineticEnergy: Double = Mac.kineticEnergy(u, v, mac.cells)
 
@@ -421,7 +508,7 @@ final class FluidState(val mac: MacGrid, val edge: Int):
 object FluidState:
   /** Live runs export the dye, the vorticity, the speed and the wall mask, each of the grid's size. */
   given stateExport: StateExport[FluidState] with
-    def size(state: FluidState): Int = 4 * state.mac.cells.cells
+    def size(state: FluidState): Int = 4 * state.mac.cells.cells + state.particles.fold(0)(_.size)
 
     def copyInto(state: FluidState, out: Array[Double]): Unit =
       val n = state.mac.cells.cells
@@ -429,6 +516,7 @@ object FluidState:
       state.vorticityInto(out, n)
       state.speedInto(out, 2 * n)
       state.wall.field.copyInteriorInto(out, 3 * n)
+      state.particles.foreach(_.copyInto(out, 4 * n))
 
     override def layout(state: FluidState): IndexedSeq[Slice] =
       val g = state.mac.cells
@@ -438,7 +526,7 @@ object FluidState:
         Slice("vorticity", n, g.nx, g.ny),
         Slice("speed", 2 * n, g.nx, g.ny),
         Slice("wall", 3 * n, g.nx, g.ny)
-      )
+      ) ++ state.particles.fold(Vector.empty[Slice])(_.slices(4 * n))
 
 /**
  * Incompressible flow on a staggered (MAC) grid with unit cells, advanced with the fixed step
@@ -492,19 +580,24 @@ object Fluid extends Model[FluidParams]:
     case _: Stepping.Adaptive => false
 
   def init(p: FluidParams, rng: SplittableRng): FluidState =
-    new FluidState(new MacGrid(p.nx, p.ny), p.edge)
+    val state = new FluidState(new MacGrid(p.nx, p.ny), p.edge, p.tracers)
+    state.seedTracers(rng)
+    state
 
   def advance(state: FluidState, p: FluidParams, dt: Double, ctx: StepContext): Unit =
-    state.step(p, dt)
+    state.step(p, dt, ctx.step)
     ctx.taken = dt
     ctx.suggestedNext = dt
 
   def digest(state: FluidState): Long =
-    state.wall.field.digestInto(
+    val fields = state.wall.field.digestInto(
       state.projection.pressure.digestInto(
         state.dye.digestInto(state.v.digestInto(state.u.digestInto(Digest.start)))
       )
     )
+    state.particles.fold(fields) { ps =>
+      Digest.fold(Digest.fold(fields, ps.columnAt(0), 0, ps.count), ps.columnAt(1), 0, ps.count)
+    }
 
   override def accepts(iv: Intervention): Either[String, Unit] = iv match
     case Intervention.Brush("wall" | "dye", _, _, _) => Right(())
