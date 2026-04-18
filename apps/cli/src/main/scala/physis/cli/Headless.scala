@@ -7,8 +7,18 @@ import java.nio.file.{Files, Path}
 import physis.core.{Model, Probe, Stepping}
 import physis.core.live.StateExport
 import physis.core.param.Preset
-import physis.core.run.{InterventionEvent, Manifest, ParamEvent, Physis, Run}
+import physis.core.run.{
+  Disc,
+  Intervention,
+  InterventionEvent,
+  Manifest,
+  Op,
+  ParamEvent,
+  Physis,
+  Run
+}
 import physis.core.sweep.{ParamGrid, PointResult, Sweep, SweepOutput, SweepSetup}
+import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams}
@@ -42,7 +52,7 @@ object Headless:
 
   val Usage: String =
     """Usage: RunHeadless [options]
-      |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum
+      |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid
       |                         (default: lorenz)
       |  --list                 list the models with their parameters and exit
       |  --preset <name>        start from a preset of the model (see describe); --param
@@ -55,12 +65,19 @@ object Headless:
       |                         1 for gray-scott and physarum, 0.5 for wave, 1/60 for boids)
       |  --adaptive <tol>       Dormand-Prince with rtol = atol = tol instead of fixed steps
       |  --seed <n>             run seed (default: 0)
-      |  --manifest <path>      write the run manifest to <path>
+      |  --manifest <path>      write the run manifest to <path> (also for frames and animations)
+      |  --stroke <spec>        a stroke at a step, recorded in the manifest (repeatable):
+      |                         STEP:brush:TARGET:X:Y:R:OP:VALUE (OP is set, add or erase),
+      |                         STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE, STEP:disturb:X:Y:R:STRENGTH
       |  --replay <path>        re-run the manifest at <path>, with its parameter changes and
-      |                         strokes; other options are ignored except --frames
+      |                         strokes; other options are ignored except --frames, --animate,
+      |                         --manifest and --stroke (more strokes end the digest check)
       |
-      |Frames (gray-scott, wave, physarum): numbered PNGs of the first image of the view
+      |Frames (gray-scott, wave, physarum, fluid): numbered PNGs of the first image of the view
       |  --frames <dir>         write the frames into <dir> instead of printing a CSV
+      |  --animate <file>       write the frames as one animated PNG instead
+      |  --fps <n>              frames per second of the animation, 1 to 65535 (default: 12)
+      |  --loops <n>            times the animation plays, 0 for ever (default: 0)
       |  --every <n>            steps between frames (default: a tenth of the run)
       |  --scale <n>            pixels per cell, 1 to 16 (default: 1)
       |  --no-color-bar         leave out the colour scale at the right
@@ -102,6 +119,10 @@ object Headless:
       events: Vector[ParamEvent] = Vector.empty,
       interventions: Vector[InterventionEvent] = Vector.empty,
       frames: Option[Path] = None,
+      animate: Option[Path] = None,
+      fps: Int = 12,
+      loops: Int = 0,
+      strokes: Vector[InterventionEvent] = Vector.empty,
       every: Option[Long] = None,
       scale: Int = 1,
       colorBar: Boolean = true,
@@ -131,7 +152,8 @@ object Headless:
       probes: P => Vector[Probe[S]],
       stepping: Stepping,
       image: Option[Image[S]] = None,
-      presets: Vector[Preset] = Vector.empty
+      presets: Vector[Preset] = Vector.empty,
+      painted: Map[String, (Int, Int) => Vector[Intervention]] = Map.empty
   )
 
   /** What frames need of a model: how its state is exported and what its view is. */
@@ -168,6 +190,14 @@ object Headless:
       Physarum.stepping,
       Some(Image(PhysarumState.stateExport, PhysarumViews.default)),
       Physarum.presets
+    ),
+    Fluid.id -> Entry[FluidParams, FluidState](
+      Fluid,
+      _ => Fluid.probes,
+      Fluid.stepping,
+      Some(Image(FluidState.stateExport, FluidViews.lab)),
+      FluidPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+      FluidPresets.all.map(p => p.name -> p.interventions).toMap
     )
   )
 
@@ -223,6 +253,17 @@ object Headless:
       case "--threads" :: v :: rest =>
         whole(v, "--threads", 1L).flatMap(n => parse(rest, options.copy(threads = Some(n.toInt))))
       case "--frames" :: path :: rest => parse(rest, options.copy(frames = Some(Path.of(path))))
+      case "--animate" :: path :: rest => parse(rest, options.copy(animate = Some(Path.of(path))))
+      case "--fps" :: v :: rest =>
+        whole(v, "--fps", 1L)
+          .filterOrElse(_ <= 65535L, s"--fps must be at most 65535, got $v")
+          .flatMap(n => parse(rest, options.copy(fps = n.toInt)))
+      case "--loops" :: v :: rest =>
+        whole(v, "--loops", 0L)
+          .filterOrElse(_ <= 65535L, s"--loops must be at most 65535, got $v")
+          .flatMap(n => parse(rest, options.copy(loops = n.toInt)))
+      case "--stroke" :: spec :: rest =>
+        stroke(spec).flatMap(e => parse(rest, options.copy(strokes = options.strokes :+ e)))
       case "--sweep" :: axis :: rest => parse(rest, options.copy(sweep = options.sweep :+ axis))
       case "--montage" :: path :: rest => parse(rest, options.copy(montage = Some(Path.of(path))))
       case "--montage-columns" :: v :: rest =>
@@ -242,11 +283,16 @@ object Headless:
     val resolved = options.replay match
       case Some(path) => fromManifest(path, options)
       case None => Right(options)
-    resolved.flatMap(o => execute(o, out, err)) match
-      case Right(code) => code
-      case Left(error) =>
+    resolved.flatMap(o => checkStrokes(o).toLeft(o)) match
+      case Left(error) if resolved.isRight =>
         err.println(s"error: $error")
-        1
+        2
+      case other =>
+        other.flatMap(o => execute(o, out, err)) match
+          case Right(code) => code
+          case Left(error) =>
+            err.println(s"error: $error")
+            1
 
   private def fromManifest(path: Path, options: Options): Either[String, Options] =
     val text =
@@ -271,8 +317,13 @@ object Headless:
               steps = m.steps,
               events = m.events,
               interventions = m.interventions,
-              expectedDigest = m.digest,
               frames = options.frames,
+              animate = options.animate,
+              fps = options.fps,
+              loops = options.loops,
+              manifest = options.manifest,
+              strokes = options.strokes,
+              expectedDigest = if options.strokes.isEmpty then m.digest else None,
               every = options.every,
               scale = options.scale,
               colorBar = options.colorBar,
@@ -299,7 +350,19 @@ object Headless:
       case None => Right(o)
       case Some(name) =>
         entry.presets.find(_.name.equalsIgnoreCase(name)) match
-          case Some(preset) => Right(o.copy(params = preset.values ++ o.params))
+          case Some(preset) =>
+            val params = preset.values ++ o.params
+            def size(name: String): Int =
+              params
+                .get(name)
+                .orElse(entry.model.params.specs.find(_.name == name).map(_.default))
+                .fold(0)(_.toInt)
+            val painted = entry.painted
+              .get(preset.name)
+              .fold(Vector.empty[InterventionEvent])(paint =>
+                paint(size("nx"), size("ny")).map(InterventionEvent(0L, _))
+              )
+            Right(o.copy(params = params, interventions = painted ++ o.interventions))
           case None =>
             val known = entry.presets.map(_.name)
             Left(
@@ -355,9 +418,10 @@ object Headless:
       try
         if o.sweep.nonEmpty then sweep(entry, o, out, err)
         else
-          o.frames match
-            case Some(dir) => frames(entry, o, p, dir, out, err)
-            case None => runAndPrint(entry, o, p, out, err)
+          (o.animate, o.frames) match
+            case (Some(file), _) => animation(entry, o, p, file, out, err)
+            case (None, Some(dir)) => frames(entry, o, p, dir, out, err)
+            case (None, None) => runAndPrint(entry, o, p, out, err)
       catch case e: IllegalArgumentException => Left(e.getMessage)
     }
 
@@ -369,7 +433,7 @@ object Headless:
       .seed(o.seed)
       .sampleEvery(o.sampleEvery)
       .events(o.events)
-      .interventions(o.interventions)
+      .interventions((o.interventions ++ o.strokes).sortBy(_.step))
       .probe((if probes then entry.probes(p) else Vector.empty)*)
       .build()
 
@@ -437,10 +501,122 @@ object Headless:
           val last = Frames.frame(Frames.snapshot(run, image.exporter), image.view, options)
           val range = last.fold("")(f => s", colours of the last frame from ${f.lo} to ${f.hi}")
           err.println(s"# ${files.size} frames of ${o.model} in $dir, $steps steps$range")
+          writeManifest(o, run, steps, dt)
           digestCheck(o, run.digest, err)
         }
       }
     }
+
+  /** The manifest of a finished frames or animation run, if `--manifest` asked for one. */
+  private def writeManifest(o: Options, run: Run[Any, Any], steps: Long, dt: Double): Unit =
+    o.manifest.foreach { path =>
+      val m = run.manifest(steps * dt).copy(steps = Some(steps), digest = Some(run.digest))
+      Files.writeString(path, Manifest.toJson(m), StandardCharsets.UTF_8)
+    }
+
+  /** One animated PNG of the model's view; its path is printed. */
+  private def animation(
+      entry: Entry[Any, Any],
+      o: Options,
+      p: Any,
+      file: Path,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    entry.image.toRight(s"model '${o.model}' has no image to export").flatMap { image =>
+      val fixed: Either[String, Double] = o.steppingFor(entry.stepping) match
+        case Stepping.Fixed(dt) => Right(dt)
+        case _ => Left("animations need fixed steps")
+      fixed.flatMap { dt =>
+        val run = build(entry, o, p, probes = false)
+        val steps = o.steps.getOrElse(math.round(o.until / dt))
+        val options = Frames.Options(
+          o.every.getOrElse(math.max(1L, steps / 10)),
+          o.scale,
+          o.colorBar,
+          o.compress,
+          fps = o.fps,
+          loops = o.loops
+        )
+        Frames.animation(run, steps, image.exporter, image.view, file, options).map { n =>
+          out.println(file.toString)
+          val seconds = n.toDouble / o.fps
+          err.println(
+            f"# animation of ${o.model} in $file: $n frames, $steps steps, ${o.fps} fps " +
+              f"($seconds%.1f s), " + (if o.loops == 0 then "loops for ever"
+                                       else s"plays ${o.loops} times")
+          )
+          writeManifest(o, run, steps, dt)
+          digestCheck(o, run.digest, err)
+        }
+      }
+    }
+
+  /** The first problem of the strokes of `o` for its model, if any. */
+  private def checkStrokes(o: Options): Option[String] =
+    catalog.get(o.model).flatMap { entry =>
+      o.strokes.iterator
+        .map { e =>
+          e.intervention.validate
+            .toLeft(())
+            .flatMap(_ => entry.model.accepts(e.intervention))
+            .left
+            .map(m => s"stroke at step ${e.step}: $m")
+        }
+        .collectFirst { case Left(m) => m }
+    }
+
+  /** Reads `STEP:brush:...`, `STEP:pulse:...` or `STEP:disturb:...`. */
+  def stroke(spec: String): Either[String, InterventionEvent] =
+    def fail(why: String): Either[String, Nothing] = Left(s"--stroke '$spec': $why")
+    def num(text: String, what: String): Either[String, Double] =
+      text.toDoubleOption.filter(d => !d.isNaN && !d.isInfinite) match
+        case Some(d) => Right(d)
+        case None => fail(s"$what must be a number, got '$text'")
+    def brush(target: String, x: String, y: String, r: String, op: String, value: Option[String]) =
+      for
+        cx <- num(x, "x")
+        cy <- num(y, "y")
+        cr <- num(r, "r")
+        operation <- Op.parse(op).left.map(m => s"--stroke '$spec': $m")
+        v <- value match
+          case Some(text) => num(text, "value")
+          case None if operation == Op.Erase => Right(0.0)
+          case None => fail(s"a $op stroke needs a value")
+      yield Intervention.Brush(target, Disc(cx, cy, cr), operation, v)
+    def pulse(target: String, x: String, y: String, sigma: String, amplitude: String) =
+      for
+        cx <- num(x, "x")
+        cy <- num(y, "y")
+        sd <- num(sigma, "sigma")
+        a <- num(amplitude, "amplitude")
+      yield Intervention.Pulse(target, cx, cy, sd, a)
+    def disturb(x: String, y: String, r: String, strength: String) =
+      for
+        cx <- num(x, "x")
+        cy <- num(y, "y")
+        cr <- num(r, "r")
+        k <- num(strength, "strength")
+      yield Intervention.Disturb(Disc(cx, cy, cr), k)
+    val shape =
+      "expected STEP:brush:TARGET:X:Y:R:OP:VALUE, STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE or " +
+        "STEP:disturb:X:Y:R:STRENGTH"
+    val parts = spec.split(":", -1).toList
+    val made: Either[String, Intervention] = parts.drop(1) match
+      case "brush" :: target :: x :: y :: r :: op :: Nil => brush(target, x, y, r, op, None)
+      case "brush" :: target :: x :: y :: r :: op :: value :: Nil =>
+        brush(target, x, y, r, op, Some(value))
+      case "pulse" :: target :: x :: y :: sigma :: amplitude :: Nil =>
+        pulse(target, x, y, sigma, amplitude)
+      case "disturb" :: x :: y :: r :: strength :: Nil => disturb(x, y, r, strength)
+      case _ => fail(shape)
+    for
+      iv <- made
+      step <- parts.head.toLongOption.filter(_ >= 0L) match
+        case Some(n) => Right(n)
+        case None => fail(s"the step must be a whole number from 0, got '${parts.head}'")
+      _ <- iv.validate.toLeft(()).left.map(m => s"--stroke '$spec': $m")
+    yield InterventionEvent(step, iv)
 
   /** What a sweep keeps of each run besides its probes. */
   private final case class Extra(manifest: String, picture: Option[Frame])

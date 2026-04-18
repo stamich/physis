@@ -87,7 +87,8 @@ class CliSuite extends munit.FunSuite:
   test("list names every model and describe gives one in full") {
     val (code, listing, _) = go("list")
     assertEquals(code, 0)
-    val models = Vector("lorenz", "double-pendulum", "gray-scott", "boids", "wave", "physarum")
+    val models =
+      Vector("lorenz", "double-pendulum", "gray-scott", "boids", "wave", "physarum", "fluid")
     for id <- models do assert(listing.contains(s"$id (version "), id)
     for id <- models do
       val (c, text, err) = go("describe", id)

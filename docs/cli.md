@@ -19,7 +19,8 @@ The distribution needs a Java 22 or newer on the path. The examples below leave 
 | Command | What it does |
 | --- | --- |
 | `run` | runs a model and prints its probes as CSV |
-| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum) |
+| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid) |
+| `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`); `--stroke` adds strokes to a run |
 | `sweep` | one run per point of a grid, results in grid order, as CSV |
 | `montage <png>` | a sweep that also tiles the final images of all points into one PNG |
 | `replay <manifest>` | re-runs a manifest with its parameter changes and strokes |

@@ -12,6 +12,7 @@ dependencies {
     implementation(project(":models:boids"))
     implementation(project(":models:wave"))
     implementation(project(":models:physarum"))
+    implementation(project(":models:fluid"))
 }
 
 application {
