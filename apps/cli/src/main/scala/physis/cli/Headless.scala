@@ -632,7 +632,9 @@ object Headless:
       Left(s"model '${o.model}' has no image for a montage")
     else
       ParamGrid.parse(o.sweep, entry.model.params).flatMap { grid =>
-        if o.dryRun then dryRun(grid, o, out)
+        if o.interventions.nonEmpty && grid.axes.exists(a => a.name == "nx" || a.name == "ny") then
+          Left("a sweep over nx or ny cannot keep what the preset painted for one size")
+        else if o.dryRun then dryRun(grid, o, out)
         else
           (if o.failFast then checkPoints(entry, o, grid) else Right(()))
             .flatMap(_ => runGrid(entry, o, grid, out, err))
@@ -681,7 +683,8 @@ object Headless:
       o.until,
       if o.until > 0.0 then o.until else 1.0,
       o.params,
-      o.seed
+      o.seed,
+      o.interventions.sortBy(_.step)
     )
     val threads = o.threads.getOrElse(Sweep.defaultThreads)
     val tile = Frames.Options(every = 1, colorBar = false)

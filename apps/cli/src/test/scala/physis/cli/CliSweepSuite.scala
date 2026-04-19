@@ -127,3 +127,92 @@ class CliSweepSuite extends munit.FunSuite:
       finally stream.close()
       val _ = Files.deleteIfExists(dir)
   }
+
+  private val wake = Seq(
+    "--model",
+    "fluid",
+    "--preset",
+    "Cylinder wake",
+    "--param",
+    "nx=96",
+    "--param",
+    "ny=36",
+    "--param",
+    "tracers=0",
+    "--sweep",
+    "viscosity=0.384,0.192,0.096",
+    "--until",
+    "8"
+  )
+
+  private def removeAll(dir: Path): Unit =
+    val stream = Files.walk(dir)
+    try
+      stream.sorted(java.util.Comparator.reverseOrder[Path]()).forEach { f =>
+        val _ = Files.deleteIfExists(f)
+      }
+    finally stream.close()
+
+  test("a Reynolds scan of the cylinder wake gives the same CSV and montage on 1 and 4 threads") {
+    val dir = Files.createTempDirectory("physis-cli-wake")
+    try
+      def scan(threads: Int): (String, Array[Byte], Path) =
+        val png = dir.resolve(s"re-$threads.png")
+        val manifests = dir.resolve(s"m-$threads")
+        val (code, csv, err) = go(
+          Seq(
+            "montage",
+            png.toString,
+            "--threads",
+            threads.toString,
+            "--montage-columns",
+            "3",
+            "--manifests",
+            manifests.toString
+          ) ++ wake*
+        )
+        assertEquals(code, 0, err)
+        assert(err.contains("3 pictures"), err)
+        (csv, Files.readAllBytes(png), manifests)
+      val (csv1, png1, m1) = scan(1)
+      val (csv4, png4, _) = scan(4)
+      assertEquals(csv4, csv1)
+      assert(java.util.Arrays.equals(png1, png4), "the montage differs between 1 and 4 threads")
+      val lines = csv1.linesIterator.toVector
+      assertEquals(lines.size, 4)
+      val header = lines.head.split(",")
+      val ke = header.indexOf("kinetic_energy")
+      assert(ke > 0, lines.head)
+      val energies = lines.tail.map(_.split(",")(ke))
+      assertEquals(energies.distinct.size, 3, "the viscosity changed nothing")
+      // the cylinder is in every tile: flat grey cells
+      val image = javax.imageio.ImageIO.read(dir.resolve("re-1.png").toFile)
+      assert(image.getWidth >= 3 * 96, image.getWidth.toString)
+      var grey = 0
+      for y <- 0 until image.getHeight; x <- 0 until image.getWidth do
+        if image.getRGB(x, y) == physis.view.HeatmapRaster.OverlayGrey then grey += 1
+      assert(grey >= 3 * 30, s"$grey grey pixels for three cylinders")
+      // a point's manifest holds the strokes of the preset and replays to its digest
+      val first = Files.list(m1).toArray.map(_.asInstanceOf[Path]).minBy(_.toString)
+      val (rc, _, summary) = go("replay", first.toString)
+      assertEquals(rc, 0, summary)
+      assert(!summary.contains("DIFFERS"), summary)
+      assert(Files.readString(first).contains("wall"), "the cylinder is not in the manifest")
+    finally removeAll(dir)
+  }
+
+  test("a sweep of the grid size cannot keep what a preset painted") {
+    val (code, _, err) = go(
+      "sweep",
+      "--model",
+      "fluid",
+      "--preset",
+      "Cylinder wake",
+      "--sweep",
+      "nx=64,96",
+      "--until",
+      "1"
+    )
+    assertEquals(code, 1)
+    assert(err.contains("cannot keep what the preset painted"), err)
+  }
