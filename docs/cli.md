@@ -20,7 +20,7 @@ The distribution needs a Java 22 or newer on the path. The examples below leave 
 | --- | --- |
 | `run` | runs a model and prints its probes as CSV |
 | `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid) |
-| `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`); `--stroke` adds strokes to a run |
+| `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`) |
 | `sweep` | one run per point of a grid, results in grid order, as CSV |
 | `montage <png>` | a sweep that also tiles the final images of all points into one PNG |
 | `replay <manifest>` | re-runs a manifest with its parameter changes and strokes |
@@ -40,7 +40,8 @@ physis-cli replay run.json
 ## Parameters and presets
 
 `--param name=value` overrides a parameter. `--preset <name>` starts from a preset of the model
-(see `describe`; gray-scott, boids and physarum have them), and `--param` is applied after it, so
+(see `describe`; gray-scott, boids, physarum and fluid have them; a preset of the fluid also
+paints its walls and dye, and they are recorded in the manifest), and `--param` is applied after it, so
 a preset can be varied.
 
 ```bash
@@ -62,6 +63,42 @@ the run) as `frame-00000.png`, `frame-00001.png`, and so on; one path a line on 
 `--scale n` repeats every cell n times (1 to 16), `--no-color-bar` leaves out the colour scale,
 `--compress` deflates the data. A model whose view is not a field (lorenz, double-pendulum) has no
 image and the command fails with exit code 1. See [export.md](export.md).
+
+## Animations
+
+```bash
+physis-cli animate cavity.png --model fluid --preset Cavity --steps 60 --every 6 --fps 10 --scale 2
+physis-cli animate loop.png --model fluid --preset Cavity --steps 30 --every 10 --loops 3
+```
+
+`animate <file>` writes the same pictures as `frames` into one animated PNG and prints its
+path. `--fps n` is the number of pictures a second (1 to 65535, default 12), `--loops n` how
+many times it plays (0, the default, for ever); `--every`, `--scale`, `--no-color-bar` and
+`--compress` are as for frames. The first picture is also the ordinary image of the file, so a
+viewer without animation shows it. The bytes depend only on the run (without `--compress`).
+`replay <manifest> --animate <file>` animates a replay. See [export.md](export.md).
+
+## Strokes
+
+```bash
+physis-cli animate smoke.png --model fluid --preset Cavity --steps 40 --every 10 --stroke 5:brush:dye:32:32:4:set:1 --stroke 10:pulse:u:32:32:3:1 --manifest smoke.json
+physis-cli replay smoke.json --animate again.png --every 10
+```
+
+`--stroke` adds an [intervention](interventions.md) at a step, and can be repeated, for `run`,
+`frames`, `animate` and `replay`:
+
+| Stroke | Meaning |
+| --- | --- |
+| `STEP:brush:TARGET:X:Y:R:OP:VALUE` | `OP` is `set`, `add` or `erase` (then `VALUE` may be left out); a disc of radius `R` around `(X, Y)` in cells |
+| `STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE` | a Gaussian bump |
+| `STEP:disturb:X:Y:R:STRENGTH` | turns the agents in a disc (boids) |
+
+A stroke is checked against the model before anything runs (`describe` and the model's page
+list its targets); a wrong one is a usage error, exit code 2. `--manifest <path>` records the
+run with its strokes, also for `frames`, `animate` and `replay`, so that the session replays
+bit for bit. A replay with more strokes records them too and does not compare the digest, since
+the run is a different one now.
 
 ## Sweeps
 
@@ -95,6 +132,10 @@ physis-cli montage map.png --model gray-scott --param nx=32 --param ny=32 --swee
 The final images of all points are tiled into one PNG with a gap of one pixel, the last axis
 along a row (`--montage-columns n` for another width, `--scale` and `--compress` as for frames).
 A point that failed leaves its tile empty.
+
+A preset that paints (the fluid's) is applied to every point, so a sweep over `viscosity` with
+`--preset "Cylinder wake"` is a Reynolds scan; sweeping `nx` or `ny` with such a preset is
+refused, because the painting is for one size. See [sweeps.md](sweeps.md).
 
 ## Replay
 

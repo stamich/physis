@@ -26,13 +26,15 @@ class CliDocsSuite extends munit.FunSuite:
           if whole.startsWith("physis-cli ") then blocks += whole
     blocks.result().map(_.split("\\s+").toList.drop(1))
 
-  private val fileOptions = Set("--out", "--jsonl", "--manifests", "--manifest", "--frames")
+  private val fileOptions =
+    Set("--out", "--jsonl", "--manifests", "--manifest", "--frames", "--animate")
 
   /** The same arguments with every file or directory moved into `dir`. */
   private def inside(dir: Path, args: List[String]): List[String] =
     def moved(name: String): String = dir.resolve(name).toString
     val main = args match
-      case ("frames" | "montage" | "replay") :: first :: rest => args.head :: moved(first) :: rest
+      case ("frames" | "animate" | "montage" | "replay") :: first :: rest =>
+        args.head :: moved(first) :: rest
       case _ => args
     def go(rest: List[String]): List[String] = rest match
       case option :: path :: tail if fileOptions.contains(option) =>

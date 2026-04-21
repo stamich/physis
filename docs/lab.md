@@ -21,7 +21,7 @@ for the current platform (Linux, macOS, Windows; x64 and arm64) by the build.
 | Area | Contents |
 | --- | --- |
 | Left | model picker, presets, parameter panel, tool box, seed field, run controls |
-| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude; Physarum: the trail with the agents as white dots above coverage and structures) |
+| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude; Physarum: the trail with the agents as white dots above coverage and structures; Fluids: the dye with the tracer particles as faint white dots above kinetic energy and enstrophy) |
 | Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; the value of the heatmap cell under the pointer; status messages |
 | Menu | File → Save manifest…, Replay manifest…, Close |
 
@@ -66,7 +66,7 @@ Shortcuts are ignored while a text field has the focus or a stroke is being drag
 
 ## Painting
 
-Gray–Scott, Boids, Waves and Physarum have a **tool box** under the parameters. At first no tool is on and
+Gray–Scott, Boids, Waves, Physarum and Fluids have a **tool box** under the parameters. At first no tool is on and
 the pointer only reads cells. Choosing a tool turns the brush on: a ring follows the pointer and
 shows its radius.
 
@@ -76,6 +76,7 @@ shows its radius.
 | Waves | **Wall** (right button erases), **Erase wall**, **Pulse** (value: amplitude) |
 | Boids | **Disturb** (value: strength) |
 | Physarum | **Paint food** (right button erases), **Erase food**, **Paint trail** |
+| Fluids | **Smoke** (dye, right button erases), **Push sideways** and **Push up** (value: speed, right button pushes the other way), **Wall** (right button erases), **Erase wall** |
 
 The left button applies the tool and dragging paints a line; the right button erases where the
 tool paints. The mouse wheel over the view changes the radius, the slider and the value field do
@@ -87,8 +88,8 @@ next step.
 
 Every dab is an [intervention](interventions.md), recorded in the manifest, so File → Save
 manifest… and Replay manifest… work with painted sessions; the status line says how many
-parameter changes and strokes were saved or replayed. The presets of Waves paint their walls
-and pulses at step 0 and start a new run; Reset brings them back, painting you added by hand is
+parameter changes and strokes were saved or replayed. The presets of Waves and Fluids paint their walls,
+dye and pulses at step 0 and start a new run; Reset brings them back, painting you added by hand is
 gone.
 
 ## How it runs

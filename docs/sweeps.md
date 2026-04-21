@@ -40,6 +40,22 @@ for each point that replays with `--replay` to the same digest. A failed point h
 a gap between them, the last axis along a row. A failed point leaves its tile empty. See
 [export.md](export.md).
 
+## Example: a Reynolds scan
+
+A preset that paints (the fluid's cylinder) is part of every point, so the viscosity axis is a
+Reynolds axis (`Re = 1.0 · D / ν` with the diameter `D` = 14.4 cells of the 192 × 72 preset):
+
+```bash
+physis-cli montage re.png --model fluid --preset "Cylinder wake" --param tracers=0 \
+  --sweep viscosity=0.384,0.192,0.096 --until 200 --montage-columns 3
+```
+
+The three tiles show the wake at Reynolds numbers 37.5, 75 and 150, the first below the critical
+number of about 47, where the wake stays steady. The street needs a few hundred time units to
+develop (the slow test runs 750), so a short scan shows the start-up. The CSV and the montage are the same for any number of threads, and the manifest of each
+point (`--manifests`) holds the cylinder as a stroke at step 0. Sweeping `nx` or `ny` with such
+a preset is refused.
+
 ## Example
 
 ```bash
