@@ -2,6 +2,81 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.6.0 — fluids
+
+Incompressible flow on a staggered grid, with the pressure projection, dye and tracer particles,
+a Lab entry, sweeps over the viscosity and animated PNG export. Models of earlier milestones are
+unchanged and their digests are the same.
+
+### Added
+
+- **fields**: `Poisson` (conjugate gradients with a warm start, singular cases handled),
+  `MacGrid` and `Mac` (divergence, gradient, curl, vorticity, kinetic energy on the staggered
+  grid), `Sampler.bilinearAt`, `Advect` (semi-Lagrangian, midpoint backtrace) and `Projection`
+  (walls, inflow, outflow and periodic axes); [docs/numerics.md](docs/numerics.md).
+- **models/fluid**: the `fluid` model, version 0.6.0: a lid-driven box, a channel with an inflow
+  and a periodic box, walls painted while it runs, dye with buoyancy, tracer particles, probes
+  (kinetic energy, divergence, enstrophy, dye mass, shedding), four presets (Cavity, Cylinder
+  wake, Smoke plume, Vortex pair) and views of the dye, the vorticity and the speed;
+  [docs/models/fluid.md](docs/models/fluid.md). Verified against the lid-driven cavity of Ghia,
+  Ghia and Shin (largest difference of the centre lines 0.013), a Taylor–Green vortex, and the
+  vortex street behind a cylinder (Strouhal number 0.218 in the numpy reference
+  `tools/fluid_reference.py`); the divergence is under 10⁻⁶ after every step and a step allocates
+  nothing.
+- **Lab**: Fluids with the tools Smoke, Push sideways, Push up, Wall and Erase wall; presets that
+  paint at step 0 and start a new run; sessions save and replay to the same digest.
+- **view**: `Apng`, an animated PNG writer with no toolkit and the same bytes for the same
+  frames; `Frames.animation`; `Png` hands its scanline and chunk helpers to the writer (the bytes
+  of `Png` are unchanged). [docs/export.md](docs/export.md).
+- **physis-cli**: `animate <file>` (`--fps`, `--loops`, `--every`, `--scale`), `replay --animate`,
+  `--stroke` for run, frames, animate and replay, `--manifest` for frames and animate, and the
+  fluid and its presets among the models.
+- **sweeps**: `SweepSetup.interventions`, so every point gets the strokes of a preset; a Reynolds
+  scan is `montage re.png --model fluid --preset "Cylinder wake" --sweep viscosity=...`, with the
+  same CSV and montage on 1 and 4 threads.
+- **Speed**: `FluidSpeedSuite` records cell updates per second and solver iterations per step
+  for 256 × 256 cells (CI: 0.25 and 0.24 million cell updates per second, 716 iterations).
+
+### Changed
+
+- `Field2D.copyFrom` checks its sizes without building a message, which allocated 24 bytes a
+  call and showed up in the allocation test of a fluid step.
+
+### Differences from the 0.6.0 plan
+
+- Too fast a flow is not refused: the velocity is limited to 4 cells per step, which keeps the
+  semi-Lagrangian backtrace inside the grid. Only the explicit diffusion has a limit the model
+  checks (`ν·dt ≤ 0.2`, so the viscosity is at most 0.8).
+- Two push tools instead of one: a dab has no direction, so there are Push sideways and Push up
+  (the right button pushes the other way).
+- The wake test checks a Strouhal number between 0.17 and 0.27 around 0.218 from the numpy
+  reference at 160 × 64 (22 % blockage), not the 0.16 to 0.19 of an unbounded flow; the critical
+  Reynolds number is checked as steady at 20 and shedding at 150.
+- The pressure solver is an unpreconditioned conjugate gradient with a cap of 1000 iterations,
+  not a multigrid; 716 iterations a step on 256 × 256 makes a step cost about a quarter of a
+  second there. The speed bars are 0.1 million cell updates per second and 800 iterations,
+  below the two CI measurements.
+- The vorticity is drawn on a fixed scale (`ValueRange.symmetric(0.5)`), so that a swirl keeps
+  its colour.
+- Presets of the fluid paint through interventions, so the CLI needed a table of painting
+  presets and sweeps needed `SweepSetup.interventions`. A sweep over `nx` or `ny` with such a
+  preset is refused.
+- A wrong `--stroke` is exit code 2, also when the model refuses it (unknown target), and a
+  replay with extra strokes records them and does not compare the old digest.
+- Not in this release: the **Save animation** button of the Lab (planned for 0.6.1), JDK 25.
+
+### Not measured
+
+- The frame rate of the Lab with the fluid on a real display, and how many steps a second the
+  presets reach: the CI runners have no GPU and the Lab tests only check the pixels. The speed
+  range of the fluid in the Lab is 5 to 600 steps a second; the only measurement is the 0.25
+  million cell updates per second on 256 × 256 (about four steps a second there).
+- Why a step allocated 416 bytes in 300 steps on two macOS runs and nothing measurable on the
+  others (the same code, the same value): not found. It is one-off, not per step, so it looks like
+  the JIT (a deoptimisation or a closure that was not inlined yet) and not a leak. The bound of
+  the fluid's allocation tests is 3000 bytes in 300 steps (10 bytes a step; a real allocation per
+  step would be 16 bytes or more, 4 800 and up), where it had been 300.
+
 ## 0.5.1 — physis-cli
 
 Patch release: the command line that 0.5 left in `examples`, tests that no longer fail on a loaded
