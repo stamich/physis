@@ -91,3 +91,70 @@ class FluidFramesSuite extends munit.FunSuite:
     intercept[IllegalArgumentException](Frames.Options(1, fps = 0))
     intercept[IllegalArgumentException](Frames.Options(1, loops = -1))
   }
+
+  test("progress counts the frames, and the total is known before the first step") {
+    withDir { dir =>
+      val seen = Vector.newBuilder[(Int, Int)]
+      val r = session()
+      val n = Frames
+        .animation(
+          r,
+          40L,
+          FluidState.stateExport,
+          FluidViews.lab,
+          dir.resolve("p.png"),
+          Frames.Options(every = 10),
+          progress = (done, total) => seen += ((done, total))
+        )
+        .fold(e => fail(e), identity)
+      assertEquals(n, 5)
+      assertEquals(seen.result(), (1 to 5).map(k => (k, 5)).toVector)
+    }
+  }
+
+  test("cancelling stops the run before its next step and leaves no file") {
+    withDir { dir =>
+      val file = dir.resolve("c.png")
+      val r = session()
+      var stop = false
+      val result = Frames.animation(
+        r,
+        400L,
+        FluidState.stateExport,
+        FluidViews.lab,
+        file,
+        Frames.Options(every = 10),
+        progress = (done, _) => if done == 2 then stop = true,
+        cancelled = () => stop
+      )
+      assertEquals(result, Left(Frames.Cancelled))
+      assertEquals(r.stepCount, 10L, "it ran on after the cancel")
+      assert(!Files.exists(file), "a cancelled animation left its file")
+    }
+  }
+
+  test("a refused animation does not delete a file that was already there") {
+    withDir { dir =>
+      val file = dir.resolve("keep.png")
+      Files.writeString(file, "mine")
+      val plot = View.Plot(Seq(Channel.ProbeAt(0, "kinetic_energy")), 10.0)
+      val result =
+        Frames.animation(session(), 10L, FluidState.stateExport, plot, file, Frames.Options(5))
+      assert(result.isLeft)
+      assertEquals(Files.readString(file), "mine")
+    }
+  }
+
+  test("frameCount is the number of frames render writes, from any starting step") {
+    for (from, steps, every) <- Seq(
+        (0L, 40L, 10L),
+        (0L, 45L, 10L),
+        (0L, 0L, 5L),
+        (7L, 40L, 10L),
+        (10L, 40L, 10L),
+        (0L, 3L, 10L)
+      )
+    do
+      val expected = (from +: ((from + 1) to steps)).count(k => k == from || k % every == 0)
+      assertEquals(Frames.frameCount(from, steps, every), expected, s"$from $steps $every")
+  }

@@ -1,6 +1,6 @@
 package physis.view
 
-import java.io.IOException
+import java.io.{BufferedOutputStream, IOException, OutputStream}
 import java.nio.file.{Files, Path}
 
 import physis.core.live.{Snapshot, StateExport}
@@ -71,7 +71,8 @@ object Frames:
       steps: Long,
       exporter: StateExport[S],
       view: View,
-      options: Options
+      options: Options,
+      cancelled: () => Boolean = () => false
   )(emit: Frame => Unit): Option[String] =
     if imageOf(view).isEmpty then Some("the view has no image to export")
     else
@@ -82,9 +83,11 @@ object Frames:
           case Some(f) => emit(f)
       next()
       while failure.isEmpty && run.stepCount < steps do
-        run.step()
-        if run.stepCount % options.every == 0 then next()
-      failure
+        if cancelled() then failure = Some(Cancelled)
+        else
+          run.step()
+          if run.stepCount % options.every == 0 then next()
+      if failure.isEmpty && cancelled() then Some(Cancelled) else failure
 
   /**
    * Runs `run` on to step `steps` and writes a frame into `dir` (made if needed) before the
@@ -111,11 +114,27 @@ object Frames:
       }.toLeft(written.result())
     catch case e: IOException => Left(s"cannot write frames to $dir: ${e.getMessage}")
 
+  /** The message of a run that was stopped by its cancel flag. */
+  val Cancelled: String = "cancelled"
+
+  /**
+   * How many frames a run that is now at step `from` writes up to step `steps`: the one now,
+   * and one at every multiple of `every` after it.
+   */
+  def frameCount(from: Long, steps: Long, every: Long): Int =
+    require(every >= 1, s"frames: 'every' must be at least 1, got $every")
+    if steps <= from then 1 else (1L + steps / every - from / every).toInt
+
   /**
    * The same frames as [[render]], as one animated PNG at `path` (see [[Apng]]): shown at
-   * `options.fps` frames per second and played `options.loops` times. The frames are held in
-   * memory until the run is done, so a long run of a large grid takes a few hundred megabytes at
-   * most; raise `every` to thin it out. Returns the number of frames.
+   * `options.fps` frames per second and played `options.loops` times. The frames are written one
+   * at a time (see [[Apng.Writer]]), so memory holds one frame whatever the length. The bytes are
+   * those of 0.6.0, which collected the frames first.
+   *
+   * `progress` is called with (frames written, frames in all) after every frame; when
+   * `cancelled` turns true the run stops before its next step, the file is removed and the
+   * result is `Left(Cancelled)`. A file is also removed when anything else goes wrong.
+   * Returns the number of frames.
    */
   def animation[P, S](
       run: Run[P, S],
@@ -123,25 +142,60 @@ object Frames:
       exporter: StateExport[S],
       view: View,
       path: Path,
-      options: Options
+      options: Options,
+      progress: (Int, Int) => Unit = (_, _) => (),
+      cancelled: () => Boolean = () => false
   ): Either[String, Int] =
-    val pictures = Vector.newBuilder[Frame]
+    val total = frameCount(run.stepCount, steps, options.every)
+    var out: OutputStream = null
+    var writer: Apng.Writer = null
+    var written = 0
+    var created = false
+    def drop(): Unit =
+      if out != null then
+        try out.close()
+        catch case _: IOException => ()
+        out = null
+      if created then
+        try
+          val _ = Files.deleteIfExists(path)
+        catch case _: IOException => ()
     try
-      eachFrame(run, steps, exporter, view, options)(f => pictures += f) match
-        case Some(why) => Left(why)
-        case None =>
-          val all = pictures.result()
-          val first = all.head
+      val result = eachFrame(run, steps, exporter, view, options, cancelled) { f =>
+        if writer == null then
           Option(path.toAbsolutePath.getParent).foreach(Files.createDirectories(_))
-          Apng.write(
-            path,
-            all.map(_.pixels),
-            first.width,
-            first.height,
+          out = new BufferedOutputStream(Files.newOutputStream(path), 1 << 16)
+          created = true
+          writer = new Apng.Writer(
+            out,
+            f.width * options.factor,
+            f.height * options.factor,
+            total,
             options.fps,
             options.loops,
-            options.factor,
-            options.compress
+            alpha = options.colorBar,
+            compress = options.compress
           )
-          Right(all.size)
-    catch case e: IOException => Left(s"cannot write the animation to $path: ${e.getMessage}")
+        writer.add(Png.scale(f.pixels, f.width, f.height, options.factor))
+        written += 1
+        progress(written, total)
+      }
+      result match
+        case Some(why) =>
+          drop()
+          Left(why)
+        case None =>
+          if writer == null || written != total then
+            drop()
+            Left(s"wrote $written of $total frames")
+          else
+            writer.finish()
+            out.close()
+            Right(written)
+    catch
+      case e: IOException =>
+        drop()
+        Left(s"cannot write the animation to $path: ${e.getMessage}")
+      case e: IllegalArgumentException =>
+        drop()
+        Left(s"cannot write the animation: ${e.getMessage}")
