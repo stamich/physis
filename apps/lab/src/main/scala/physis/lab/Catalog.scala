@@ -13,7 +13,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
-import physis.view.{Dab, View}
+import physis.view.{Dab, Frames, View}
 
 /**
  * The speeds a model can run at, in simulated time per second.
@@ -79,10 +79,17 @@ final class LabSession(
     val presets: Vector[Preset] = Vector.empty,
     val speedRange: SpeedRange = SpeedRange.Default,
     val usesSeed: Boolean = false,
-    val tools: Vector[LabTool] = Vector.empty
+    val tools: Vector[LabTool] = Vector.empty,
+    val exporter: Option[StateExport[?]] = None
 ):
   /** Whether strokes wrap across the border, given the current parameters. */
   def wraps(params: Map[String, Double]): Boolean = model.wraps(params)
+
+  /**
+   * Whether the session can make pictures of its state without a window (Save image, Save
+   * animation): it has a state exporter and its view holds a heatmap. The ODE models do not.
+   */
+  def hasImage: Boolean = exporter.isDefined && Frames.imageOf(view).isDefined
 
 /** A catalog entry for an ODE model. */
 final class OdeEntry[P](
@@ -155,7 +162,8 @@ final class ModelEntry[P, S](
       presets,
       speedRange,
       usesSeed = seeded,
-      tools = tools
+      tools = tools,
+      exporter = Some(exporter)
     )
 
 /** Models available in Physis Lab. */
