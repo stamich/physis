@@ -16,6 +16,11 @@ dependencies {
     implementation(project(":models:fluid"))
 }
 
+dependencies {
+    // the test compares the Lab's animation with the file `physis-cli replay --animate` writes
+    testImplementation(project(":apps:cli"))
+}
+
 application {
     mainClass.set("physis.lab.Launcher")
 }
