@@ -30,6 +30,12 @@ final case class AnimationOptions(
   def frames: Frames.Options =
     Frames.Options(every, scale, colorBar, compress = false, fps = fps, loops = loops)
 
+/**
+ * What a model suggests for an animation: steps between pictures and pictures per second. The
+ * dialog starts from these, with `every` raised if the session is long enough to need it.
+ */
+final case class AnimationDefaults(every: Long = 10, fps: Int = 12)
+
 /** What a saved animation came to. */
 final case class AnimationReport(
     frames: Int,
@@ -86,6 +92,22 @@ object LabAnimations:
         else if t < 90 then f"about $t%.0f s" else f"about ${t / 60}%.0f min"
       )
       s"$frames frames of $width x $height px, $size, $time"
+
+  /** The first picture is at least this wide after scaling, so a small grid is not a postage stamp. */
+  val WantedWidth: Int = 480
+
+  /** Pixels per cell for a picture `cells` wide: the smallest scale of 1 to 8 that reaches [[WantedWidth]]. */
+  def scaleFor(cells: Int): Int =
+    math.max(1, math.min(8, (WantedWidth + cells - 1) / math.max(1, cells)))
+
+  /**
+   * The options the dialog opens with for a session of `steps` steps: the model's own `every`
+   * and rate, `every` raised to stay within [[MaxFrames]] and lowered to give at least two
+   * pictures, and a scale from the width of the grid.
+   */
+  def suggest(steps: Long, defaults: AnimationDefaults, cells: Int): AnimationOptions =
+    val every = math.max(minEvery(steps), math.min(defaults.every, math.max(1L, steps / 2)))
+    AnimationOptions(every = every, fps = defaults.fps, scale = scaleFor(cells))
 
   /** The smallest `every` that keeps an animation of `steps` steps within [[MaxFrames]]. */
   def minEvery(steps: Long): Long = math.max(1L, (steps + MaxFrames - 2) / (MaxFrames - 1))

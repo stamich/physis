@@ -75,3 +75,24 @@ class LabEstimateSuite extends munit.FunSuite:
       assert(refused.left.exists(_.contains("the most is 600")), refused.toString)
     finally s.live.stop()
   }
+
+  test("every field model suggests a length that fits, whatever the session length") {
+    for m <- Seq(Catalog.grayScott, Catalog.wave, Catalog.physarum, Catalog.fluid) do
+      for steps <- Seq(1L, 2L, 3L, 10L, 99L, 800L, 5000L, 100000L) do
+        val o = LabAnimations.suggest(steps, m.animationDefaults, cells = 256)
+        val frames = LabAnimations.frameCount(steps, o)
+        assert(o.every >= 1L && o.fps >= 1, s"${m.id} $steps: $o")
+        assert(frames <= LabAnimations.MaxFrames, s"${m.id} $steps: $frames frames")
+        if steps >= 2L then assert(frames >= 2, s"${m.id} $steps: one frame")
+        assertEquals(LabAnimations.check(steps, o), None, s"${m.id} $steps")
+  }
+
+  test("the fluid suggests 20 pictures a second every 4 steps: 800 steps are 10 seconds") {
+    val o = LabAnimations.suggest(800L, Catalog.fluid.animationDefaults, cells = 128)
+    assertEquals((o.every, o.fps, o.scale), (4L, 20, 4))
+    assertEquals(LabAnimations.frameCount(800L, o) / o.fps, 10)
+    assertEquals(LabAnimations.suggest(10L, Catalog.grayScott.animationDefaults, 256).every, 5L)
+    assertEquals(LabAnimations.scaleFor(512), 1)
+    assertEquals(LabAnimations.scaleFor(64), 8)
+    assertEquals(LabAnimations.scaleFor(1000), 1)
+  }
