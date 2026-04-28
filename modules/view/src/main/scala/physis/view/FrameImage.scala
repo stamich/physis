@@ -77,6 +77,11 @@ object FrameImage:
   def layers(s: Snapshot, view: View.Layers): Option[Frame] =
     heatmap(s, view.base, Some(view.dots))
 
+  /** The pixels [[withColorBar]] adds to the right of a frame `height` pixels high. */
+  def colorBarExtra(height: Int, barWidth: Int = 0): Int =
+    val bar = if barWidth > 0 then barWidth else math.max(6, height / 20)
+    bar + math.max(2, bar / 2)
+
   /**
    * `frame` with a colour scale to its right: the first colour of `colormap` at the bottom, the
    * last at the top, after a transparent gap. The scale has no labels (the range is in the
@@ -85,9 +90,9 @@ object FrameImage:
   def withColorBar(frame: Frame, colormap: Colormap, barWidth: Int = 0): Frame =
     val w = frame.width
     val h = frame.height
+    val total = w + colorBarExtra(h, barWidth)
     val bar = if barWidth > 0 then barWidth else math.max(6, h / 20)
     val gap = math.max(2, bar / 2)
-    val total = w + gap + bar
     val lut = HeatmapRaster.lut(colormap)
     val out = new Array[Int](total * h)
     var y = 0
