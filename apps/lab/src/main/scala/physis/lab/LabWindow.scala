@@ -79,6 +79,10 @@ final class LabWindow(
   cell.setTextFill(Theme.Text)
   cell.setPadding(new Insets(4, 8, 4, 8))
 
+  /** File → Save animation…; disabled when the model has no image. */
+  val animationItem: MenuItem = new MenuItem("Save animation…")
+  animationItem.setDisable(true)
+
   private val bottom = new HBox(16, overlay.node, cell, status)
   bottom.setAlignment(Pos.CENTER_LEFT)
   root.setLeft(side)
@@ -93,11 +97,12 @@ final class LabWindow(
       val item = new MenuItem(s"$factor×")
       item.setOnAction(_ => chooseAndSaveImage(factor))
       image.getItems.add(item)
+    animationItem.setOnAction(_ => chooseAndSaveAnimation())
     val replay = new MenuItem("Replay manifest…")
     replay.setOnAction(_ => chooseAndReplay())
     val quit = new MenuItem("Close")
     quit.setOnAction(_ => Option(root.getScene).map(_.getWindow).foreach(_.hide()))
-    new MenuBar(new Menu("File", null, save, image, replay, quit))
+    new MenuBar(new Menu("File", null, save, image, animationItem, replay, quit))
 
   private def chooser(): FileChooser =
     val c = new FileChooser()
@@ -116,6 +121,37 @@ final class LabWindow(
       c.getExtensionFilters.add(new FileChooser.ExtensionFilter("PNG image", "*.png"))
       c.setInitialFileName(s"${r.session.model.id}.png")
       Option(c.showSaveDialog(root.getScene.getWindow)).foreach(f => saveImage(f.toPath, factor))
+
+  /** The pictures per second the session has run at, kept for the time estimate while paused. */
+  private var lastRate = 0.0
+
+  private def chooseAndSaveAnimation(): Unit =
+    for r <- running if r.session.hasImage; shot <- r.loop.snapshot do
+      if shot.step < 1L then status.setText("Nothing has run yet: start the session first")
+      else
+        val cells = LabAnimations
+          .pictureSize(r.session, shot, AnimationOptions(1L, colorBar = false))
+          .fold(256)(_._1)
+        val initial = LabAnimations.suggest(shot.step, r.session.model.animationDefaults, cells)
+        val form = new AnimationForm(r.session, shot, shot.step, lastRate, initial)
+        val owner = Option(root.getScene).map(_.getWindow).orNull
+        for options <- AnimationDialog.ask(owner, form) do
+          val c = new FileChooser()
+          c.getExtensionFilters.add(new FileChooser.ExtensionFilter("Animated PNG", "*.png"))
+          c.setInitialFileName(s"${r.session.model.id}-animation.png")
+          Option(c.showSaveDialog(owner)).foreach(f => saveAnimation(f.toPath, options))
+
+  /**
+   * Replays the session so far and saves it as an animated PNG at `path` (see
+   * [[LabAnimations]]); the status line says what came of it. Call it on the FX thread.
+   */
+  def saveAnimation(path: Path, options: AnimationOptions): Either[String, AnimationReport] =
+    val result: Either[String, AnimationReport] = running match
+      case None => Left("no session is running")
+      case Some(r) =>
+        LabAnimations.save(r.session, r.session.live.manifest(), registry, path, options)
+    status.setText(result.fold(e => s"Could not save the animation: $e", _.summary(path)))
+    result
 
   private def chooseAndReplay(): Unit =
     Option(chooser().showOpenDialog(root.getScene.getWindow)).foreach(f => replayManifest(f.toPath))
@@ -230,8 +266,11 @@ final class LabWindow(
       )
     var lastStep = -1L
     var lastParams: AnyRef = null
+    lastRate = 0.0
+    animationItem.setDisable(!session.hasImage)
     loop.onFrame { _ =>
       loop.snapshot.foreach { s =>
+        if s.stepsPerSecond > 0.0 then lastRate = s.stepsPerSecond
         controls.refresh(s)
         if box != null then
           box.setStrokes(s.interventions)
@@ -334,6 +373,7 @@ final class LabWindow(
       r.session.live.stop()
     }
     running = None
+    animationItem.setDisable(true)
 
   /**
    * Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed, B tool on or
