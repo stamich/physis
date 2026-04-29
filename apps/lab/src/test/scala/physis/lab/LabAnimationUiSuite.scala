@@ -1,6 +1,7 @@
 package physis.lab
 
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
 import javafx.scene.Scene
@@ -102,24 +103,95 @@ class LabAnimationUiSuite extends LabSuite:
     }
   }
 
-  fxTest("saveAnimation writes the file and the status line says so") {
+  private def saved(
+      window: LabWindow,
+      file: java.nio.file.Path,
+      options: AnimationOptions,
+      afterFrame: (Int, Int) => Unit = (_, _) => ()
+  ): Either[String, AnimationReport] =
+    LabFx.onFx(window.saveAnimation(file, options, afterFrame)).get(120, TimeUnit.SECONDS)
+
+  private def text(window: LabWindow): String = LabFx.onFx(window.status.getText)
+
+  fxTest("saveAnimation refuses before anything has run, then writes the file") {
     withWindow("fluid") { window =>
       val file = Files.createTempFile("physis-lab-ui", ".png")
       try
-        val early = LabFx.onFx(window.saveAnimation(file, AnimationOptions(every = 4)))
+        val early = saved(window, file, AnimationOptions(every = 4))
         assert(early.left.exists(_.contains("nothing has run yet")), early.toString)
-        assert(LabFx.onFx(window.status.getText).startsWith("Could not save the animation"))
+        assert(text(window).startsWith("Could not save the animation"), text(window))
         step(window, 12)
         val report =
-          LabFx.onFx(window.saveAnimation(file, AnimationOptions(every = 4, writeManifest = false)))
+          saved(window, file, AnimationOptions(every = 4, writeManifest = false))
             .fold(e => fail(e), identity)
         assert(report.frames >= 4, report.toString)
-        assert(
-          LabFx.onFx(window.status.getText).startsWith("Saved"),
-          LabFx.onFx(window.status.getText)
-        )
+        assert(text(window).startsWith("Saved"), text(window))
         assert(ImageIO.read(file.toFile) != null)
+        assert(!LabFx.onFx(window.savingAnimation))
+        assert(LabFx.onFx(!window.animationItem.isDisable), "menu item back on")
       finally
         val _ = Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest(
+    "saving runs in the background: progress reaches the total and the menu is off meanwhile"
+  ) {
+    withWindow("fluid") { window =>
+      step(window, 12)
+      val file = Files.createTempFile("physis-lab-ui", ".png")
+      val seen = new java.util.concurrent.CopyOnWriteArrayList[(Int, Int)]()
+      val gate = new java.util.concurrent.CountDownLatch(1)
+      try
+        val future = LabFx.onFx(
+          window.saveAnimation(
+            file,
+            AnimationOptions(every = 2, writeManifest = false),
+            (f, t) =>
+              val _ = seen.add((f, t))
+              if f == 1 then
+                val _ = gate.await(30, TimeUnit.SECONDS)
+          )
+        )
+        LabFx.await("first frame")(!seen.isEmpty)
+        assert(LabFx.onFx(window.savingAnimation))
+        assert(LabFx.onFx(window.animationItem.isDisable), "menu off while saving")
+        assert(LabFx.onFx(window.animationCancel.getParent.isVisible), "cancel shown")
+        val second = LabFx.onFx(window.saveAnimation(file, AnimationOptions(every = 2)))
+        assert(
+          second.get(30, TimeUnit.SECONDS).left.exists(_.contains("already")),
+          "second save refused"
+        )
+        gate.countDown()
+        val report = future.get(120, TimeUnit.SECONDS).fold(e => fail(e), identity)
+        val last = seen.get(seen.size - 1)
+        assertEquals(last._1, last._2)
+        assertEquals(last._2, report.frames)
+        LabFx.await("idle again")(!LabFx.onFx(window.savingAnimation))
+        assert(!LabFx.onFx(window.animationCancel.getParent.isVisible), "cancel hidden")
+        assert(LabFx.onFx(!window.animationItem.isDisable), "menu back on")
+      finally
+        gate.countDown()
+        val _ = Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("Cancel stops the save, says so and leaves no file") {
+    withWindow("fluid") { window =>
+      step(window, 12)
+      val dir = Files.createTempDirectory("physis-lab-ui")
+      val file = dir.resolve("cancelled.png")
+      val result =
+        saved(
+          window,
+          file,
+          AnimationOptions(every = 2, writeManifest = false),
+          (f, _) => if f == 2 then window.cancelAnimation()
+        )
+      assertEquals(result.left.toOption, Some(physis.view.Frames.Cancelled))
+      assertEquals(text(window), "Animation cancelled")
+      assert(!Files.exists(file), "no file left behind")
+      assert(LabFx.onFx(!window.animationItem.isDisable), "menu back on")
+      val _ = Files.deleteIfExists(dir)
     }
   }

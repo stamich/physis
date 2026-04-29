@@ -2,11 +2,22 @@ package physis.lab
 
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicBoolean
 
 import javafx.application.Platform
 import javafx.geometry.{Insets, Pos}
 import javafx.scene.{Node, Scene}
-import javafx.scene.control.{ComboBox, Label, Menu, MenuBar, MenuItem, ScrollPane, TextInputControl}
+import javafx.scene.control.{
+  Button,
+  ComboBox,
+  Label,
+  Menu,
+  MenuBar,
+  MenuItem,
+  ProgressBar,
+  ScrollPane,
+  TextInputControl
+}
 import javafx.stage.FileChooser
 import javafx.scene.input.{KeyCode, KeyEvent}
 import javafx.scene.layout.{
@@ -38,7 +49,7 @@ import physis.fx.{
   ToolBox,
   TrajectoryRenderer
 }
-import physis.view.{Direction, Frame, FrameImage, Png, View}
+import physis.view.{Direction, Frame, FrameImage, Frames, Png, View}
 
 /**
  * The Physis Lab window contents: model picker, parameter panel and run controls on the left,
@@ -83,7 +94,17 @@ final class LabWindow(
   val animationItem: MenuItem = new MenuItem("Save animation…")
   animationItem.setDisable(true)
 
-  private val bottom = new HBox(16, overlay.node, cell, status)
+  /** Progress of a Save animation and the button that stops it; shown only while one runs. */
+  val animationProgress: ProgressBar = new ProgressBar(0.0)
+  animationProgress.setPrefWidth(160)
+  val animationCancel: Button = new Button("Cancel")
+  private val animationBox = new HBox(8, animationProgress, animationCancel)
+  animationBox.setAlignment(Pos.CENTER_LEFT)
+  animationBox.setVisible(false)
+  animationBox.setManaged(false)
+  animationCancel.setOnAction(_ => cancelAnimation())
+
+  private val bottom = new HBox(16, overlay.node, cell, status, animationBox)
   bottom.setAlignment(Pos.CENTER_LEFT)
   root.setLeft(side)
   root.setBottom(bottom)
@@ -135,23 +156,100 @@ final class LabWindow(
         val initial = LabAnimations.suggest(shot.step, r.session.model.animationDefaults, cells)
         val form = new AnimationForm(r.session, shot, shot.step, lastRate, initial)
         val owner = Option(root.getScene).map(_.getWindow).orNull
-        for options <- AnimationDialog.ask(owner, form) do
-          val c = new FileChooser()
-          c.getExtensionFilters.add(new FileChooser.ExtensionFilter("Animated PNG", "*.png"))
-          c.setInitialFileName(s"${r.session.model.id}-animation.png")
-          Option(c.showSaveDialog(owner)).foreach(f => saveAnimation(f.toPath, options))
+        if exporting.isEmpty then
+          for options <- AnimationDialog.ask(owner, form) do
+            val c = new FileChooser()
+            c.getExtensionFilters.add(new FileChooser.ExtensionFilter("Animated PNG", "*.png"))
+            c.setInitialFileName(s"${r.session.model.id}-animation.png")
+            Option(c.showSaveDialog(owner)).foreach(f => saveAnimation(f.toPath, options))
+
+  /** The cancel flag of the animation being saved, if one is. */
+  @volatile private var exporting: Option[AtomicBoolean] = None
+
+  /** Whether an animation is being saved. */
+  def savingAnimation: Boolean = exporting.isDefined
+
+  private def refreshAnimationItem(): Unit =
+    animationItem.setDisable(exporting.isDefined || !running.exists(_.session.hasImage))
+
+  /** Stops the animation being saved, if any; its file is removed. Safe from any thread. */
+  def cancelAnimation(): Unit = exporting.foreach(_.set(true))
+
+  private def animationText(path: Path, result: Either[String, AnimationReport]): String =
+    result match
+      case Right(report) => report.summary(path)
+      case Left(Frames.Cancelled) => "Animation cancelled"
+      case Left(e) => s"Could not save the animation: $e"
 
   /**
-   * Replays the session so far and saves it as an animated PNG at `path` (see
-   * [[LabAnimations]]); the status line says what came of it. Call it on the FX thread.
+   * Replays the session as it is now and saves it as an animated PNG at `path` (see
+   * [[LabAnimations]]) on a background thread, so the window stays alive and the session keeps
+   * running. The progress bar and the status line follow it, Cancel stops it, and the returned
+   * future completes on the FX thread with what came of it. `afterFrame` is called with
+   * (frames written, frames in all) on the worker thread after each frame. Call it on the FX
+   * thread; one animation at a time.
    */
-  def saveAnimation(path: Path, options: AnimationOptions): Either[String, AnimationReport] =
-    val result: Either[String, AnimationReport] = running match
-      case None => Left("no session is running")
+  def saveAnimation(
+      path: Path,
+      options: AnimationOptions,
+      afterFrame: (Int, Int) => Unit = (_, _) => ()
+  ): CompletableFuture[Either[String, AnimationReport]] =
+    val done = new CompletableFuture[Either[String, AnimationReport]]()
+    def refuse(why: String): CompletableFuture[Either[String, AnimationReport]] =
+      status.setText(s"Could not save the animation: $why")
+      if !done.complete(Left(why)) then ()
+      done
+    running match
+      case None => refuse("no session is running")
+      case Some(_) if exporting.isDefined => refuse("an animation is being saved already")
       case Some(r) =>
-        LabAnimations.save(r.session, r.session.live.manifest(), registry, path, options)
-    status.setText(result.fold(e => s"Could not save the animation: $e", _.summary(path)))
-    result
+        scala.util.Try(r.session.live.manifest()).toEither match
+          case Left(e) => refuse(s"the session did not answer: ${e.getMessage}")
+          case Right(manifest) =>
+            val cancel = new AtomicBoolean(false)
+            exporting = Some(cancel)
+            refreshAnimationItem()
+            animationProgress.setProgress(0.0)
+            animationBox.setVisible(true)
+            animationBox.setManaged(true)
+            status.setText(s"Saving ${path.getFileName}…")
+            val started = System.nanoTime()
+            def show(frames: Int, total: Int): Unit =
+              animationProgress.setProgress(frames.toDouble / math.max(1, total))
+              val left =
+                (System.nanoTime() - started) / 1e9 * (total - frames) / math.max(1, frames)
+              status.setText(
+                f"Saving ${path.getFileName}: $frames of $total frames" +
+                  (if frames < total then f", about $left%.0f s left" else "")
+              )
+            def finish(result: Either[String, AnimationReport]): Unit =
+              exporting = None
+              animationBox.setVisible(false)
+              animationBox.setManaged(false)
+              refreshAnimationItem()
+              status.setText(animationText(path, result))
+              if !done.complete(result) then ()
+            def work(): Unit =
+              val result =
+                try
+                  LabAnimations.save(
+                    r.session,
+                    manifest,
+                    registry,
+                    path,
+                    options,
+                    (frames, total) =>
+                      Platform.runLater(() => show(frames, total))
+                      afterFrame(frames, total)
+                    ,
+                    () => cancel.get
+                  )
+                catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+              Platform.runLater(() => finish(result))
+            val worker = new Thread(() => work(), "physis-animation")
+            worker.setDaemon(true)
+            worker.start()
+            done
 
   private def chooseAndReplay(): Unit =
     Option(chooser().showOpenDialog(root.getScene.getWindow)).foreach(f => replayManifest(f.toPath))
@@ -267,7 +365,7 @@ final class LabWindow(
     var lastStep = -1L
     var lastParams: AnyRef = null
     lastRate = 0.0
-    animationItem.setDisable(!session.hasImage)
+    animationItem.setDisable(exporting.isDefined || !session.hasImage)
     loop.onFrame { _ =>
       loop.snapshot.foreach { s =>
         if s.stepsPerSecond > 0.0 then lastRate = s.stepsPerSecond
@@ -373,7 +471,7 @@ final class LabWindow(
       r.session.live.stop()
     }
     running = None
-    animationItem.setDisable(true)
+    refreshAnimationItem()
 
   /**
    * Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed, B tool on or
