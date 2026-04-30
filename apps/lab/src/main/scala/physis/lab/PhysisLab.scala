@@ -11,5 +11,5 @@ object PhysisLab extends JFXApp3:
     stage = new JFXApp3.PrimaryStage()
     stage.title = "Physis Lab"
     stage.scene = new scalafx.scene.Scene(scene)
-    stage.delegate.setOnCloseRequest(_ => window.close())
+    stage.delegate.setOnCloseRequest(_ => window.shutdown())
     window.open(Catalog.models.head.id)

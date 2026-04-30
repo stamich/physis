@@ -195,3 +195,71 @@ class LabAnimationUiSuite extends LabSuite:
       val _ = Files.deleteIfExists(dir)
     }
   }
+
+  fxTest("an unwritable path gives a message, not a stack trace, and the menu comes back") {
+    withWindow("fluid") { window =>
+      step(window, 12)
+      val dir = Files.createTempFile("physis-lab-ui", ".txt")
+      val file = dir.resolve("a.png") // its parent is a plain file, so nothing can be written there
+      val result = saved(window, file, AnimationOptions(every = 4))
+      assert(result.isLeft, result.toString)
+      val line = text(window)
+      assert(line.startsWith("Could not save the animation"), line)
+      assert(!line.contains("Exception") && !line.contains("\tat "), line)
+      assert(!Files.exists(file))
+      assert(LabFx.onFx(!window.animationItem.isDisable), "menu back on")
+      val _ = Files.deleteIfExists(dir)
+    }
+  }
+
+  fxTest("switching model while saving does not disturb the save") {
+    withWindow("fluid") { window =>
+      step(window, 12)
+      val file = Files.createTempFile("physis-lab-ui", ".png")
+      val reached = new java.util.concurrent.CountDownLatch(1)
+      try
+        val future = LabFx.onFx(
+          window.saveAnimation(
+            file,
+            AnimationOptions(every = 2, writeManifest = false),
+            (f, _) =>
+              if f == 1 then
+                reached.countDown()
+                Thread.sleep(300)
+          )
+        )
+        assert(reached.await(30, TimeUnit.SECONDS))
+        LabFx.onFx(window.open("lorenz", startPaused = true))
+        val report = future.get(120, TimeUnit.SECONDS).fold(e => fail(e), identity)
+        assert(report.frames >= 4, report.toString)
+        assert(ImageIO.read(file.toFile) != null)
+        assert(text(window).startsWith("Saved"), text(window))
+        assert(LabFx.onFx(window.animationItem.isDisable), "lorenz has no image")
+      finally
+        val _ = Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("closing the window cancels the save and removes the partial file") {
+    val window = LabFx.onFx(new LabWindow(Catalog.models))
+    LabFx.onFx(window.open("fluid", startPaused = true))
+    step(window, 12)
+    val dir = Files.createTempDirectory("physis-lab-ui")
+    val file = dir.resolve("closing.png")
+    val reached = new java.util.concurrent.CountDownLatch(1)
+    val future = LabFx.onFx(
+      window.saveAnimation(
+        file,
+        AnimationOptions(every = 2, writeManifest = false),
+        (f, _) =>
+          if f == 1 then
+            reached.countDown()
+            Thread.sleep(300)
+      )
+    )
+    assert(reached.await(30, TimeUnit.SECONDS))
+    LabFx.onFx(window.shutdown())
+    assert(!Files.exists(file), "no partial file")
+    assertEquals(future.get(30, TimeUnit.SECONDS).left.toOption, Some(physis.view.Frames.Cancelled))
+    val _ = Files.deleteIfExists(dir)
+  }

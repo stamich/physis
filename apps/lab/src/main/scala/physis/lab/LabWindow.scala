@@ -172,6 +172,8 @@ final class LabWindow(
   private def refreshAnimationItem(): Unit =
     animationItem.setDisable(exporting.isDefined || !running.exists(_.session.hasImage))
 
+  @volatile private var worker: Option[Thread] = None
+
   /** Stops the animation being saved, if any; its file is removed. Safe from any thread. */
   def cancelAnimation(): Unit = exporting.foreach(_.set(true))
 
@@ -246,9 +248,10 @@ final class LabWindow(
                   )
                 catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
               Platform.runLater(() => finish(result))
-            val worker = new Thread(() => work(), "physis-animation")
-            worker.setDaemon(true)
-            worker.start()
+            val thread = new Thread(() => work(), "physis-animation")
+            thread.setDaemon(true)
+            worker = Some(thread)
+            thread.start()
             done
 
   private def chooseAndReplay(): Unit =
@@ -472,6 +475,15 @@ final class LabWindow(
     }
     running = None
     refreshAnimationItem()
+
+  /**
+   * Closes the window for good: cancels the animation being saved, waits a moment for its partial
+   * file to be removed, and stops the session.
+   */
+  def shutdown(): Unit =
+    cancelAnimation()
+    worker.foreach(_.join(3000))
+    close()
 
   /**
    * Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed, B tool on or
