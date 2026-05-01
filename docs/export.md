@@ -33,11 +33,23 @@ builder. `Apng.write` enlarges each frame like `Png.scale`.
   `Frames.animation` writes the same frames into one animated PNG (`Options.fps`, `Options.loops`).
 - `Montage.tile` joins several frames into one sheet.
 
+`Apng.Writer(out, width, height, frames, fps, loops, alpha, compress)` writes the same file one
+frame at a time to a stream, so a long animation needs memory for one frame, not all of them. It
+is told the number of frames and whether pixels have alpha up front, because the header comes
+first; `Apng.encode` is built on it and gives the same bytes. `Frames.animation` uses it and can
+report progress and be cancelled (`Frames.Cancelled`); a cancelled or failed write removes the
+file it began.
+
 ## In the Lab
 
 **File → Save image** writes the first image of the current view at 1×, 2×, 4× or 8× to a file
 you choose. It is the field as drawn, with a colour scale and the range in the status line. Views
 without an image (Lorenz, pendulum) say so instead.
+
+**File → Save animation…** replays the session from its manifest and writes an animated PNG
+(and, if asked, the manifest) in the background; see [lab.md](lab.md). The file equals the one
+`physis-cli replay <manifest> --animate` writes with the same `--every`, `--fps`, `--scale`,
+`--loops` and colour scale.
 
 ## On the command line
 

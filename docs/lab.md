@@ -64,6 +64,28 @@ Shortcuts are ignored while a text field has the focus or a stroke is being drag
 
 **File → Save image** writes the first image of the view (the field as drawn, with a colour scale) as a PNG at 1×, 2×, 4× or 8×; see [export.md](export.md).
 
+## Saving an animation
+
+**File → Save animation…** turns the session so far into an animated PNG. It is on for models
+with a picture (the field models; not Lorenz, the pendulum or Boids) and off while nothing has
+run or while another animation is being saved.
+
+The dialog shows a picture every *n* steps, the speed in pictures a second, the scale (1× to
+16×), the number of loops (0 for ever), whether to add the colour scale, and whether to write the
+manifest next to the file (`name.json`). Its first guess suits the model and the length of the
+session, and a line under the fields gives the number of frames, the size of the picture, the size
+of the file and about how long it will take. More than 600 frames is refused, and the line says
+which *n* would fit.
+
+The animation is not a recording of the screen. The Lab replays the session from its manifest, in
+the background: strokes, parameter changes and presets come back at the steps where they
+happened, and the result is the same bytes as `physis-cli replay <manifest> --animate` with the
+same settings. The session keeps running meanwhile, and switching model does not disturb the save.
+The status line and a progress bar show the frames written and the time left; **Cancel** stops it
+and removes the file. Closing the window cancels it too. A fluid replay is slow (about 4 steps a
+second at 256 × 256), so look at the estimate first. Problems (nothing has run yet, a path that
+cannot be written) appear in the status line.
+
 ## Painting
 
 Gray–Scott, Boids, Waves, Physarum and Fluids have a **tool box** under the parameters. At first no tool is on and
