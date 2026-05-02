@@ -10,6 +10,7 @@ import physis.fields.{
   Advect,
   Boundaries,
   Brush,
+  Diffuse,
   Field2D,
   Mac,
   MacGrid,
@@ -243,29 +244,10 @@ final class FluidState(val mac: MacGrid, val edge: Int, tracerCount: Int):
           vf(i, -1) = vf(i, ny - 1)
           vf(i, ny + 1) = vf(i, 1)
           i += 1
-      laplacian(uf, scratchU, projection.poisson.openU, s)
-      laplacian(vf, scratchV, projection.poisson.openV, s)
+      Diffuse.stepOpen(uf, scratchU, projection.poisson.openU, s)
+      Diffuse.stepOpen(vf, scratchV, projection.poisson.openV, s)
       uf.copyFrom(scratchU)
       vf.copyFrom(scratchV)
-
-  /** `out = f + s · ∇²f` on the faces that are open (the halo of `f` must be filled). */
-  private def laplacian(f: Field2D, out: Field2D, open: Field2D, s: Double): Unit =
-    val fd = f.data
-    val od = out.data
-    val op = open.data
-    val stride = f.grid.stride
-    var j = 0
-    while j < f.ny do
-      var k = f.grid.index(0, j)
-      val end = k + f.nx
-      while k < end do
-        val c = fd(k)
-        od(k) =
-          if op(k) != 0.0 then
-            c + s * ((((fd(k - 1) + fd(k + 1)) + fd(k - stride)) + fd(k + stride)) - 4.0 * c)
-          else c
-        k += 1
-      j += 1
 
   /** Diffusion of the dye, `d += κ dt ∇²d`, with no flux through the border. */
   private def diffuseDye(p: FluidParams, dt: Double): Unit =
@@ -273,18 +255,7 @@ final class FluidState(val mac: MacGrid, val edge: Int, tracerCount: Int):
     if s > 0.0 then
       val d = dye
       (if periodic then Boundaries.periodic else Boundaries.neumann).fill(d)
-      val dd = d.data
-      val sd = scratchC.data
-      val stride = mac.cells.stride
-      var j = 0
-      while j < ny do
-        var k = mac.cells.index(0, j)
-        val end = k + nx
-        while k < end do
-          val c = dd(k)
-          sd(k) = c + s * ((((dd(k - 1) + dd(k + 1)) + dd(k - stride)) + dd(k + stride)) - 4.0 * c)
-          k += 1
-        j += 1
+      Diffuse.step(d, scratchC, s)
       d.copyFrom(scratchC)
 
   /** Removes the dye inside walls. */
