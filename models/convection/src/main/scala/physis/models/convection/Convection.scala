@@ -141,6 +141,9 @@ final class ConvectionState(val mac: MacGrid, val sides: Int):
   /** Solver iterations of the latest step. */
   var iterations: Int = 0
 
+  /** The thermal diffusivity of the latest step, which the Nusselt number is measured against. */
+  private var kappa: Double = Convection.MaxDiffusion
+
   projection.configure(wall.field)
 
   /** The horizontal velocity, on the vertical faces. */
@@ -245,7 +248,7 @@ final class ConvectionState(val mac: MacGrid, val sides: Int):
    */
   def step(p: ConvectionParams, dt: Double): Unit =
     val nu = Convection.viscosity(p)
-    val kappa = Convection.diffusivity(p)
+    kappa = Convection.diffusivity(p)
     closeFaces()
     lift(Convection.acceleration(p), dt)
     val limit = Convection.MaxCellsPerStep / dt
@@ -332,6 +335,60 @@ final class ConvectionState(val mac: MacGrid, val sides: Int):
 
   /** Largest divergence of any cell. */
   def maxDivergence: Double = projection.maxDivergence(u, v)
+
+  /**
+   * The Nusselt number from the heat the flow carries, `Nu = 1 + H ⟨w θ⟩ / κ`, with `⟨ ⟩` the
+   * average over all cells and `w` at the cell centres: the heat transported divided by what
+   * conduction alone would carry. It is 1 at rest and grows with the vigour of the convection.
+   */
+  def nusselt: Double =
+    val t = theta.field
+    val f = v
+    var sum = 0.0
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        sum += 0.5 * (f(i, j) + f(i, j + 1)) * t(i, j)
+        i += 1
+      j += 1
+    1.0 + ny * (sum / (nx * ny)) / kappa
+
+  /**
+   * The Nusselt number at the floor from the temperature gradient there, `Nu = 1 - 2 H ⟨θ⟩₀`,
+   * with `⟨θ⟩₀` the average of the first row (the plate is half a cell below it and has θ = 0).
+   */
+  def nusseltFloor: Double =
+    val t = theta.field
+    var sum = 0.0
+    var i = 0
+    while i < nx do
+      sum += t(i, 0)
+      i += 1
+    1.0 - 2.0 * ny * sum / nx
+
+  /** The Nusselt number at the lid, `Nu = 1 + 2 H ⟨θ⟩` of the last row. */
+  def nusseltLid: Double =
+    val t = theta.field
+    var sum = 0.0
+    var i = 0
+    while i < nx do
+      sum += t(i, ny - 1)
+      i += 1
+    1.0 + 2.0 * ny * sum / nx
+
+  /** The largest upward velocity of any face. */
+  def maxUp: Double =
+    val f = v
+    var m = 0.0
+    var j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        m = math.max(m, f(i, j))
+        i += 1
+      j += 1
+    m
 
 object ConvectionState:
   /** Live runs export the temperature, its deviation, the vorticity, the speed and the walls. */
@@ -465,4 +522,20 @@ object Convection extends Model[ConvectionParams]:
   val maxDivergence: Probe[ConvectionState] =
     Probe[ConvectionState]("max_divergence", "1/t")((s, _) => s.maxDivergence)
 
-  val probes: Vector[Probe[ConvectionState]] = Vector(kineticEnergy, maxDivergence)
+  /** Heat carried by the flow over the heat conduction would carry: 1 at rest. */
+  val nusselt: Probe[ConvectionState] = Probe[ConvectionState]("nusselt")((s, _) => s.nusselt)
+
+  /** The same from the temperature gradient at the floor. */
+  val nusseltFloor: Probe[ConvectionState] =
+    Probe[ConvectionState]("nusselt_floor")((s, _) => s.nusseltFloor)
+
+  /** The same from the temperature gradient at the lid. */
+  val nusseltLid: Probe[ConvectionState] =
+    Probe[ConvectionState]("nusselt_lid")((s, _) => s.nusseltLid)
+
+  /** Largest upward velocity: how hard the plumes rise. */
+  val maxUp: Probe[ConvectionState] =
+    Probe[ConvectionState]("max_up", "cells/t")((s, _) => s.maxUp)
+
+  val probes: Vector[Probe[ConvectionState]] =
+    Vector(kineticEnergy, maxDivergence, nusselt, nusseltFloor, nusseltLid, maxUp)
