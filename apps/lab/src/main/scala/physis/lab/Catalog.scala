@@ -6,6 +6,14 @@ import physis.core.param.{ParamSchema, Preset}
 import physis.core.run.{Disc, Intervention, ModelRegistry, Op, Physis}
 import physis.fx.{RunControls, ToolSpec}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
+import physis.models.convection.{
+  Convection,
+  ConvectionParams,
+  ConvectionPresets,
+  ConvectionSides,
+  ConvectionState,
+  ConvectionViews
+}
 import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
@@ -370,9 +378,75 @@ object Catalog:
     animation = AnimationDefaults(every = 4, fps = 20)
   )
 
+  /**
+   * One step is a quarter of a time unit and the layer needs thousands of them to settle, so the
+   * speed starts high. Heat is painted as a deviation from the conduction profile: a hot spot
+   * adds warmth where the fluid is, a cool spot takes it away, and the right button resets the
+   * place to the conduction profile.
+   */
+  val convection: LabModel = new ModelEntry[ConvectionParams, ConvectionState](
+    "Convection",
+    Convection,
+    Convection.stepping,
+    Convection.probes,
+    ConvectionViews.lab,
+    ConvectionState.stateExport,
+    ConvectionPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+    SpeedRange(20.0, 1000.0, 300.0, s => f"$s%.0f steps/s"),
+    tools = Vector(
+      LabTool(
+        ToolSpec("Heat spot", Some("warmth"), 0.5, (0.05, 1.0), (1.0, 20.0), 4.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush(
+            "heat",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            v
+          )
+      ),
+      LabTool(
+        ToolSpec("Cool spot", Some("coolness"), 0.5, (0.05, 1.0), (1.0, 20.0), 4.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush(
+            "heat",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            -v
+          )
+      ),
+      LabTool(
+        ToolSpec("Wall", None, 0.0, (0.0, 0.0), (1.0, 20.0), 3.0),
+        (d, r, _, secondary) =>
+          Intervention.Brush(
+            "wall",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            1.0
+          )
+      ),
+      LabTool(
+        ToolSpec("Erase wall", None, 0.0, (0.0, 0.0), (1.0, 20.0), 6.0),
+        (d, r, _, _) => Intervention.Brush("wall", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      )
+    ),
+    wrap = p => p.getOrElse("sides", 0.0) == ConvectionSides.Periodic.toDouble,
+    painted = ConvectionPresets.all.map(p => p.name -> p.interventions).toMap,
+    animation = AnimationDefaults(every = 100, fps = 20)
+  )
+
   /** In menu order; the first one opens at start. */
-  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave, physarum, fluid)
+  val models: Vector[LabModel] =
+    Vector(lorenz, pendulum, grayScott, boids, wave, physarum, fluid, convection)
 
   /** Models by id, for replaying manifests. */
   val registry: ModelRegistry =
-    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave, Physarum, Fluid)
+    ModelRegistry.of(
+      Lorenz.model,
+      Pendulum.model,
+      GrayScott,
+      Boids,
+      Wave,
+      Physarum,
+      Fluid,
+      Convection
+    )
