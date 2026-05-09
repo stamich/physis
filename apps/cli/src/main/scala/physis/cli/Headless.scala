@@ -18,6 +18,13 @@ import physis.core.run.{
   Run
 }
 import physis.core.sweep.{ParamGrid, PointResult, Sweep, SweepOutput, SweepSetup}
+import physis.models.convection.{
+  Convection,
+  ConvectionParams,
+  ConvectionPresets,
+  ConvectionState,
+  ConvectionViews
+}
 import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
@@ -52,8 +59,8 @@ object Headless:
 
   val Usage: String =
     """Usage: RunHeadless [options]
-      |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid
-      |                         (default: lorenz)
+      |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid |
+      |                         convection (default: lorenz)
       |  --list                 list the models with their parameters and exit
       |  --preset <name>        start from a preset of the model (see describe); --param
       |                         values are applied after it
@@ -73,7 +80,7 @@ object Headless:
       |                         strokes; other options are ignored except --frames, --animate,
       |                         --manifest and --stroke (more strokes end the digest check)
       |
-      |Frames (gray-scott, wave, physarum, fluid): numbered PNGs of the first image of the view
+      |Frames (gray-scott, wave, physarum, fluid, convection): numbered PNGs of the first image of the view
       |  --frames <dir>         write the frames into <dir> instead of printing a CSV
       |  --animate <file>       write the frames as one animated PNG instead
       |  --fps <n>              frames per second of the animation, 1 to 65535 (default: 12)
@@ -198,6 +205,14 @@ object Headless:
       Some(Image(FluidState.stateExport, FluidViews.lab)),
       FluidPresets.all.map(p => Preset(p.name, p.params, p.doc)),
       FluidPresets.all.map(p => p.name -> p.interventions).toMap
+    ),
+    Convection.id -> Entry[ConvectionParams, ConvectionState](
+      Convection,
+      _ => Convection.probes,
+      Convection.stepping,
+      Some(Image(ConvectionState.stateExport, ConvectionViews.lab)),
+      ConvectionPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+      ConvectionPresets.all.map(p => p.name -> p.interventions).toMap
     )
   )
 
