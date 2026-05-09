@@ -51,6 +51,11 @@ class LabAnimationsSuite extends munit.FunSuite:
       "damping" -> 0.01
     ),
     (
+      Catalog.convection,
+      Intervention.Brush("heat", Disc(40.0, 20.0, 6.0), Op.Assign, 0.5),
+      "rayleigh" -> 5000.0
+    ),
+    (
       Catalog.grayScott,
       Intervention.Brush("v", Disc(60.0, 60.0, 6.0), Op.Assign, 0.5),
       "F" -> 0.03

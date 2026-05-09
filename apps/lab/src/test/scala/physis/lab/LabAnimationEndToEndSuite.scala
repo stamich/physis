@@ -21,24 +21,24 @@ class LabAnimationEndToEndSuite extends LabSuite:
     assert(at > 0, "no acTL chunk: not an animated PNG")
     java.nio.ByteBuffer.wrap(bytes, at + 4, 4).getInt
 
-  fxTest("a painted fluid session is saved as an animation that replays to its digest") {
+  private def paintedAndSaved(id: String, stroke: Intervention): Unit =
     val window = LabFx.onFx(new LabWindow(Catalog.models))
     val stage = LabFx.onFx {
       val stage = new Stage()
       stage.setScene(new Scene(window.root, 900, 600))
       stage.show()
-      window.open("fluid", startPaused = true)
+      window.open(id, startPaused = true)
       stage
     }
     val dir = Files.createTempDirectory("physis-lab-e2e")
     try
       val live = LabFx.onFx(window.session.get.live)
-      live.send(Command.Intervene(Intervention.Brush("dye", Disc(40.0, 40.0, 8.0), Op.Assign, 1.0)))
+      live.send(Command.Intervene(stroke))
       for _ <- 1 to 16 do live.send(Command.StepOnce)
       LabFx.await("16 steps drawn")(
         LabFx.onFx(window.loop.flatMap(_.snapshot).exists(_.step >= 16L))
       )
-      val file = dir.resolve("fluid-animation.png")
+      val file = dir.resolve(s"$id-animation.png")
       val report = LabFx
         .onFx(window.saveAnimation(file, AnimationOptions(every = 4, fps = 10)))
         .get(180, TimeUnit.SECONDS)
@@ -83,4 +83,11 @@ class LabAnimationEndToEndSuite extends LabSuite:
           val _ = Files.deleteIfExists(f)
         }
       finally walk.close()
+
+  fxTest("a painted fluid session is saved as an animation that replays to its digest") {
+    paintedAndSaved("fluid", Intervention.Brush("dye", Disc(40.0, 40.0, 8.0), Op.Assign, 1.0))
+  }
+
+  fxTest("a painted convection session is saved as an animation that replays to its digest") {
+    paintedAndSaved("convection", Intervention.Brush("heat", Disc(40.0, 10.0, 5.0), Op.Assign, 0.5))
   }
