@@ -2,6 +2,65 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.7.0 — convection
+
+Rayleigh–Bénard convection: a layer of fluid heated from below and cooled from above, which stays
+still below a critical Rayleigh number and forms rolls and then plumes above it. Models of earlier
+milestones are unchanged and their digests are the same (the golden digests of the fluid still
+hold).
+
+### Added
+
+- **fields**: `Diffuse` (the explicit 5-point diffusion step, taken out of the fluid, which now
+  uses it) and `Scalar` (a quantity at the cell centres that the flow carries and that diffuses,
+  with a boundary condition per axis); [docs/numerics.md](docs/numerics.md).
+- **models/convection**: the `convection` model, version 0.7.0: the Boussinesq equations on the
+  staggered grid of the fluid, with the temperature kept as the deviation from the conduction
+  profile; no-slip plates, periodic or insulated sides, walls painted inside; the Rayleigh and
+  Prandtl numbers as parameters; probes of the kinetic energy, the divergence, the Nusselt number
+  (three ways) and the strongest rise; five presets (Onset, Quiet, Rolls, Plumes, Painted heat);
+  views of the temperature, its deviation, the vorticity and the speed;
+  [docs/models/convection.md](docs/models/convection.md).
+- **Lab**: Convection with the tools Heat spot, Cool spot, Wall and Erase wall, the presets, and
+  Save animation (a picture every 100 steps).
+- **CLI**: `convection` in `run`, `sweep`, `frames`, `animate`, `montage` and `replay`; a sweep over
+  `rayleigh` gives Nu(Ra) and is the same on any number of threads.
+- **tools**: `tools/convection_reference.py`, an independent numpy implementation.
+
+### Verified
+
+- Linear stability in the reference: Ra_c = 1706.9 for rigid plates (exact 1707.76) and 657.5 for
+  free-slip plates (exact 27π⁴/4).
+- The model damps a perturbation at Ra 1200 and 1500 and grows it at 2200 (energy ratios 0.064, 0.39
+  and 15.1 over 1000 steps in the reference); the growth rate crosses zero near Ra 1670.
+- The rolls in a box four depths wide have a wavelength of 2.0 depths (theory 2.016) for four seeds.
+- Nusselt number at 48 × 24, Pr 1: 1.585, 2.058, 2.618 and 2.948 at Ra 3000, 5000, 10 000 and
+  20 000, the same in Scala and numpy within 0.1 to 0.3; floor, lid and carried heat agree.
+- A step allocates nothing and the divergence is under 10⁻⁶ after every step. Speed on the CI
+  runners: about 2.0 million cell updates per second at 256 × 128 with 23 solver iterations a step,
+  2.2 ms a step at 96 × 48.
+
+### Differences from the plan
+
+- **fields** gets `Diffuse` (T1) in place of a body-force hook in the fluid, and the convection
+  model has its own state: the fluid state treats "periodic" as both axes at once, while
+  convection needs periodic sides with plates above and below. The pieces they share are in
+  `fields`.
+- The free-slip case (657.5) is checked in the numpy reference only. The model has no-slip plates.
+- Five presets, not four.
+- The Nusselt comparison is with the numpy reference and the weakly nonlinear slope of about 1.4,
+  not with published tables.
+
+### Not measured
+
+- How the Lab looks and feels with convection on a real display (CI has no GPU), and whether
+  the speed range of 20 to 1000 steps/s suits a slower machine.
+- The model above Ra of about 10⁵: Plumes (Ra 300 000, Pr 7) is checked to run, stay finite and
+  replay, not against published Nusselt numbers. The scheme is diffusive there.
+- Three-dimensional convection; this is a 2D model.
+- Whether the carried-over macOS allocation flake of the fluid tests, or the Physarum speed bar
+  that failed once at 11.9 against 12 million on a CI runner, comes back.
+
 ## 0.6.1 — Save animation
 
 The Lab can save a session as an animated PNG. No model changed: every digest and manifest of
