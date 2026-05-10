@@ -25,7 +25,10 @@ vortex street behind a cylinder, with dye and tracer particles, painted walls an
 entry, sweeps over the viscosity (a Reynolds scan), and **animated PNG** export
 (`physis-cli animate`). Milestone 0.6.1 adds **File → Save animation** to the Lab: the session is
 replayed in the background into an animated PNG, with an estimate, progress and Cancel, and the
-same bytes as `physis-cli replay --animate`.
+same bytes as `physis-cli replay --animate`. Milestone 0.7.0 adds **convection**: a fluid heated from
+below forms rolls and plumes (Rayleigh–Bénard), with temperature as a field the flow carries, the
+Nusselt number as a probe, checked against the critical Rayleigh number 1708 and a numpy reference;
+the Lab paints heat and cold into it and `physis-cli sweep` scans the Rayleigh number.
 
 ## Modules
 
@@ -42,6 +45,7 @@ same bytes as `physis-cli replay --animate`.
 | `models/wave` | damped wave equation with walls, a source, reflective, free, periodic and absorbing edges |
 | `models/physarum` | Physarum agents on a trail, with presets for networks, meshes and spots |
 | `models/fluid` | incompressible flow on a staggered grid: cavity, cylinder wake, smoke, vortex pair |
+| `models/convection` | Rayleigh–Bénard convection: rolls and plumes in a layer heated from below |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -60,7 +64,7 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves, Physarum and fluids, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves, Physarum, fluids and convection, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV

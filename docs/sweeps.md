@@ -56,6 +56,20 @@ develop (the slow test runs 750), so a short scan shows the start-up. The CSV an
 point (`--manifests`) holds the cylinder as a stroke at step 0. Sweeping `nx` or `ny` with such
 a preset is refused.
 
+## Example: a Rayleigh scan
+
+The convection model has the Rayleigh number as a parameter, so a sweep over it gives the
+Nusselt number against the heating. Below the critical value (about 1708) the layer only
+conducts and `nusselt` stays at 1; above it the rolls carry heat:
+
+```bash
+physis-cli sweep --model convection --param nx=48 --param ny=24 --sweep rayleigh=1200,3000,5000 --until 1500 --sample-every 10
+```
+
+At 48 × 24 with Prandtl number 1 the settled values are about 1.0, 1.6 and 2.1 (numpy reference: 1.585 and 2.058). A short run
+shows the start-up: the rolls need a diffusion time (`H²/κ`, 720 time units here) to grow, longer
+the nearer the critical value. See [models/convection.md](models/convection.md).
+
 ## Example
 
 ```bash

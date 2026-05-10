@@ -41,13 +41,30 @@ step. Reads past the border wrap on a periodic axis and clamp otherwise.
 ## Diffusion
 
 Viscosity and dye diffusion are explicit: `f += D·dt·∇²f` with the 5-point Laplacian and ghost
-values mirrored at walls. Stable for `D·dt ≤ 0.2`, which the model checks.
+values mirrored at walls. Stable for `D·dt ≤ 0.2`, which the model checks. The step is
+`Diffuse.step` (every cell) and `Diffuse.stepOpen` (only the faces that are open, for the
+velocity), shared by the fluid and the convection model; a cosine mode decays by exactly the
+discrete factor `1 − s (2 − 2 cos(2π/n))`, which the tests use.
+
+## Scalars
+
+`Scalar` is a quantity at the cell centres that the flow carries and that diffuses (the dye, a
+temperature): two copies swapped by reference, `advect(flow, dt)` with the semi-Lagrangian step
+and `diffuse(s)` with a boundary condition per axis (periodic, Dirichlet or Neumann; see
+`Boundaries`). Advection reads edge values as they are, so a Dirichlet wall acts through
+diffusion only, which is right for a wall at rest. The convection model keeps the *deviation*
+from the conduction profile in a `Scalar` with `Dirichlet(0)` at floor and lid and a periodic
+or Neumann `x`, and adds the heat the flow carries as a source `w/H` (see
+[convection.md](models/convection.md)). Periodic in `x` and walls in `y` need the per-axis
+flags of `Projection` and `Advect.Flow`, which the fluid sets to the same value for both axes.
 
 ## Reference
 
 `tools/fluid_reference.py` is an independent numpy implementation of the same scheme with the
 table of Ghia, Ghia and Shin for the cavity, the Taylor–Green decay and the wake. The slow tests
-compare the Scala model with it and with the table.
+compare the Scala model with it and with the table. `tools/convection_reference.py` does the
+same for the convection model: the critical Rayleigh numbers of the linear problem, growth
+rates, roll wavelength and Nusselt numbers.
 
 ## Determinism
 
