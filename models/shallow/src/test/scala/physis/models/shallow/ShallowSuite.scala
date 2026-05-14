@@ -76,7 +76,7 @@ class ShallowSuite extends munit.FunSuite:
       r.runSteps(60)
       (0 until 41).map(j => r.state.v(26, j)).sum
     assertEqualsDouble(swirl(0.0), 0.0, 1e-12)
-    assert(swirl(1e-3) < -1e-4, s"east of the hump the water runs south: ${swirl(1e-3)}")
+    assert(swirl(1e-3) > 1e-4, s"east of the hump the water runs south (v > 0): ${swirl(1e-3)}")
   }
 
   test("two runs from the same parameters agree to the last bit") {

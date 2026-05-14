@@ -16,16 +16,38 @@ object ShallowSupport:
       depth: Double = 4000.0,
       dx: Double = 20_000.0,
       f0: Double = 0.0,
+      beta: Double = 0.0,
+      friction: Double = 0.0,
+      edges: Int = Shallow.Basin,
+      sponge: Int = 10,
       start: Int = 0,
       amp: Double = 0.0,
       nx: Int = 40,
       ny: Int = 30
-  ): ShallowParams = ShallowParams(gravity, depth, dx, f0, start, amp, nx, ny)
+  ): ShallowParams = ShallowParams(
+    gravity = gravity,
+    depth = depth,
+    dx = dx,
+    f0 = f0,
+    beta = beta,
+    friction = friction,
+    edges = edges,
+    sponge = sponge,
+    start = start,
+    amp = amp,
+    nx = nx,
+    ny = ny
+  )
 
-  /** Adds a Gaussian hump of height `amp` metres, `sigma` cells wide, at cell position `(x, y)`. */
+  /**
+   * Adds a Gaussian hump of height `amp` metres, `sigma` cells wide, at cell position `(x, y)`;
+   * it wraps around the sides of a channel.
+   */
   def hump(s: ShallowState, x: Double, y: Double, sigma: Double, amp: Double): Unit =
-    for j <- 0 until s.mac.ny; i <- 0 until s.mac.nx do
-      val dx = i + 0.5 - x
+    val n = s.mac.nx
+    for j <- 0 until s.mac.ny; i <- 0 until n do
+      var dx = i + 0.5 - x
+      if s.wrapX then dx -= n * math.rint(dx / n)
       val dy = j + 0.5 - y
       s.eta(i, j) += amp * math.exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma))
 
