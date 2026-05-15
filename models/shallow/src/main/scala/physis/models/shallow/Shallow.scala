@@ -3,7 +3,7 @@ package physis.models.shallow
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
-import physis.fields.{Field2D, Mac, MacGrid, Mask, Staggered}
+import physis.fields.{Advect, Field2D, Mac, MacGrid, Mask, Staggered}
 
 /**
  * Parameters of the shallow-water model. Lengths are in metres, times in seconds.
@@ -15,9 +15,13 @@ import physis.fields.{Field2D, Mac, MacGrid, Mask, Staggered}
  *                positive in the northern hemisphere, with north at the top of the picture
  * @param beta    how fast `f` grows toward the north (up the picture), in 1/(m s): 0 is an f-plane
  * @param friction the rate at which the bottom slows the flow, in 1/s
+ * @param nonlinear 0 for linear waves (small against the depth), 1 for the full equations:
+ *                the depth of the moving water and the advection of the flow by itself
  * @param edges   the borders (needs a restart): 0 a channel, wrapping left and right, with walls
  *                above and below; 1 a closed basin; 2 an open sea whose borders absorb waves
  * @param sponge  width in cells of the absorbing strip along the borders of an open sea
+ * @param seabed  the shape of the sea floor (needs a restart): 0 flat, 1 a shelf that rises
+ *                toward the right, 2 a seamount in the middle
  * @param start   how the run begins (needs a restart): 0 at rest, 1 a front, 2 a Rossby wave
  * @param amp     the size of the start, in m: the height of the front
  * @param nx      grid columns (needs a restart)
@@ -30,8 +34,10 @@ final case class ShallowParams(
     f0: Double,
     beta: Double,
     friction: Double,
+    nonlinear: Int,
     edges: Int,
     sponge: Int,
+    seabed: Int,
     start: Int,
     amp: Double,
     nx: Int,
@@ -91,6 +97,13 @@ object ShallowParams:
       doc = "Bottom friction: the rate at which the flow is slowed"
     ),
     ParamSpec(
+      "nonlinear",
+      default = 0,
+      min = 0,
+      max = 1,
+      doc = "0 linear waves, 1 with the depth of the moving water and the advection of the flow"
+    ),
+    ParamSpec(
       "edges",
       default = 1,
       min = 0,
@@ -106,6 +119,14 @@ object ShallowParams:
       max = 64,
       unit = "cells",
       doc = "Width of the absorbing strip along the borders of an open sea",
+      restart = true
+    ),
+    ParamSpec(
+      "seabed",
+      default = 0,
+      min = 0,
+      max = 2,
+      doc = "Sea floor: 0 flat, 1 a shelf that rises toward the right, 2 a seamount",
       restart = true
     ),
     ParamSpec(
@@ -160,14 +181,26 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   /** The height of the surface above rest, in m. */
   val eta: Field2D = new Field2D(mac.cells)
 
+  private val us = Array(new Field2D(mac.uFaces), new Field2D(mac.uFaces))
+  private val vs = Array(new Field2D(mac.vFaces), new Field2D(mac.vFaces))
+  private val flows = Array(
+    new Advect.Flow(us(0), vs(0), nx, ny, wrapX, false),
+    new Advect.Flow(us(1), vs(1), nx, ny, wrapX, false)
+  )
+  private var cur = 0
+
+  /** The depth of the water at rest as a fraction of the `depth` parameter: 1 over a flat floor. */
+  val shape: Field2D = new Field2D(mac.cells)
+  shape.fill(1.0)
+
+  /** Whether the latest step used the full equations. */
+  private var nonlinear = false
+
   /** The horizontal velocity, on the vertical faces, in m/s. */
-  val u: Field2D = new Field2D(mac.uFaces)
+  def u: Field2D = us(cur)
 
   /** The vertical velocity, on the horizontal faces, in m/s. */
-  val v: Field2D = new Field2D(mac.vFaces)
-
-  /** The depth of the water at rest, in m. */
-  val depth: Field2D = new Field2D(mac.cells)
+  def v: Field2D = vs(cur)
 
   /** Cells that are land. */
   val land: Mask = new Mask(mac.cells)
@@ -201,6 +234,8 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   /** Stops the flow through the closed faces. */
   def closeFaces(): Unit =
+    val u = this.u
+    val v = this.v
     var j = 0
     while j < ny do
       var i = 0
@@ -227,9 +262,19 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           i += 1
         j += 1
 
-  /** The depth of the water in every cell: the depth at rest, in this version. */
-  private def refreshTotal(): Unit =
-    total.copyFrom(depth)
+  /**
+   * The depth of the water in every cell: the depth at rest, plus the height if the equations
+   * are nonlinear (but never below 0: the model has no flooding, a coast is a wall).
+   */
+  private def refreshTotal(depth: Double): Unit =
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val rest = depth * shape(i, j)
+        total(i, j) = if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
+        i += 1
+      j += 1
 
   /**
    * Makes the outer `width` cells absorb waves: every step they keep a smaller part of the
@@ -272,6 +317,8 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   private def absorb(): Unit =
     if keepC != null then
+      val u = this.u
+      val v = this.v
       var j = 0
       while j < ny do
         var i = 0
@@ -292,8 +339,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         j += 1
 
   /** The height equation: `η -= dt ∇·(h u)`, with the flux through the open faces only. */
-  private def continuity(dt: Double): Unit =
-    refreshTotal()
+  private def continuity(depth: Double, dt: Double): Unit =
+    val u = this.u
+    val v = this.v
+    refreshTotal(depth)
     Staggered.meanToU(total, thickU, wrapX)
     Staggered.meanToV(total, thickV)
     var j = 0
@@ -319,8 +368,19 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         i += 1
       j += 1
 
+  /** The flow carries itself along: `u` and `v` advected by the flow, semi-Lagrangian. */
+  private def advectVelocity(dt: Double): Unit =
+    val from = cur
+    val to = 1 - cur
+    Advect.facesU(flows(from), us(from), us(to), dt)
+    Advect.facesV(flows(from), vs(from), vs(to), dt)
+    cur = to
+    closeFaces()
+
   /** The velocity equations: the slope of the surface and the rotation, from the new height. */
   private def momentum(p: ShallowParams, dt: Double): Unit =
+    val u = this.u
+    val v = this.v
     val g = p.gravity
     val inv = 1.0 / p.dx
     val r = p.friction
@@ -349,9 +409,36 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   /** One step of size `dt`. */
   def step(p: ShallowParams, dt: Double): Unit =
-    continuity(dt)
+    nonlinear = p.nonlinear != 0
+    continuity(p.depth, dt)
+    if nonlinear then advectVelocity(dt)
     momentum(p, dt)
     absorb()
+
+  /**
+   * Shapes the sea floor, see [[ShallowParams.seabed]]: 1 is a shelf that is flat to 55% of the
+   * width, then rises linearly to a twentieth of the depth at 90% and stays there; 2 is a
+   * Gaussian seamount in the middle that takes away 80% of the depth at its top.
+   */
+  def seabed(kind: Int): Unit =
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        shape(i, j) = kind match
+          case 1 =>
+            val x = (i + 0.5) / nx
+            if x <= 0.55 then 1.0
+            else if x >= 0.9 then Shallow.ShelfDepth
+            else 1.0 - (1.0 - Shallow.ShelfDepth) * (x - 0.55) / 0.35
+          case 2 =>
+            val sigma = 0.12 * math.min(nx, ny)
+            val dx = i + 0.5 - 0.5 * nx
+            val dy = j + 0.5 - 0.5 * ny
+            1.0 - 0.8 * math.exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma))
+          case _ => 1.0
+        i += 1
+      j += 1
 
   /**
    * A step in the height across the middle of the domain: `amp` in the northern half (the top
@@ -374,6 +461,8 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
    * west; the gravity waves of an unbalanced start would hide it.
    */
   def rossby(p: ShallowParams): Unit =
+    val u = this.u
+    val v = this.v
     val h = p.dx
     val k = 2.0 * math.Pi / (nx * h)
     val l = math.Pi / (ny * h)
@@ -436,6 +525,9 @@ object Shallow extends Model[ShallowParams]:
   /** The largest `f dt` or `r dt` the step allows. */
   val MaxRateNumber: Double = 0.5
 
+  /** The depth over the top of the shelf of seabed 1, as a fraction of the depth. */
+  val ShelfDepth: Double = 0.05
+
   /** Width of the smoothed front of [[ShallowState.front]], in cells. */
   val FrontWidth: Double = 3.0
 
@@ -482,7 +574,7 @@ object Shallow extends Model[ShallowParams]:
 
   def init(p: ShallowParams, rng: SplittableRng): ShallowState =
     val state = new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
-    state.depth.fill(p.depth)
+    state.seabed(p.seabed)
     if p.edges == OpenSea then state.sponge(p.sponge)
     p.start match
       case 1 => state.front(p.amp)
