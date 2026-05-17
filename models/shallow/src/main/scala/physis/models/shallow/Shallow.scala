@@ -3,7 +3,8 @@ package physis.models.shallow
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
-import physis.fields.{Advect, Field2D, Mac, MacGrid, Mask, Staggered}
+import physis.core.run.{Disc, Intervention, Op}
+import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Staggered}
 
 /**
  * Parameters of the shallow-water model. Lengths are in metres, times in seconds.
@@ -193,8 +194,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   val shape: Field2D = new Field2D(mac.cells)
   shape.fill(1.0)
 
-  /** Whether the latest step used the full equations. */
+  // The parameters the measurements below need; set by `configure` and by every step.
   private var nonlinear = false
+  private var depthNow = 0.0
+  private var gravityNow = 0.0
 
   /** The horizontal velocity, on the vertical faces, in m/s. */
   def u: Field2D = us(cur)
@@ -266,15 +269,25 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
    * The depth of the water in every cell: the depth at rest, plus the height if the equations
    * are nonlinear (but never below 0: the model has no flooding, a coast is a wall).
    */
-  private def refreshTotal(depth: Double): Unit =
+  private def refreshTotal(): Unit =
     var j = 0
     while j < ny do
       var i = 0
       while i < nx do
-        val rest = depth * shape(i, j)
-        total(i, j) = if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
+        total(i, j) = thickness(i, j)
         i += 1
       j += 1
+
+  /** The depth of the water in cell `(i, j)`, see [[refreshTotal]]. */
+  private def thickness(i: Int, j: Int): Double =
+    val rest = depthNow * shape(i, j)
+    if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
+
+  /** Takes the parameters that the measurements and the next step need. */
+  def configure(p: ShallowParams): Unit =
+    nonlinear = p.nonlinear != 0
+    depthNow = p.depth
+    gravityNow = p.gravity
 
   /**
    * Makes the outer `width` cells absorb waves: every step they keep a smaller part of the
@@ -339,10 +352,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         j += 1
 
   /** The height equation: `η -= dt ∇·(h u)`, with the flux through the open faces only. */
-  private def continuity(depth: Double, dt: Double): Unit =
+  private def continuity(dt: Double): Unit =
     val u = this.u
     val v = this.v
-    refreshTotal(depth)
+    refreshTotal()
     Staggered.meanToU(total, thickU, wrapX)
     Staggered.meanToV(total, thickV)
     var j = 0
@@ -409,11 +422,70 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   /** One step of size `dt`. */
   def step(p: ShallowParams, dt: Double): Unit =
-    nonlinear = p.nonlinear != 0
-    continuity(p.depth, dt)
+    configure(p)
+    continuity(dt)
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
     absorb()
+
+  /** Paints land or height, see [[Shallow.intervene]]. */
+  def applyBrush(target: String, disc: Disc, op: Op, value: Double): Unit =
+    target match
+      case "land" =>
+        val _ = land.paint(disc, wrapX, false, op, value)
+        landChanged()
+      case _ =>
+        val _ = Brush(eta, disc, wrapX, false, op, value)
+        clearLand()
+
+  /** Adds a Gaussian of height (`amplitude` negative lowers) centred at `(x, y)` in cells. */
+  def applyPulse(x: Double, y: Double, sigma: Double, amplitude: Double): Unit =
+    val _ = Pulse.stamp(eta, x, y, sigma, amplitude, wrapX, false)
+    clearLand()
+
+  /** The volume of water above rest, `∫ η`, in m³. */
+  def volume: Double = eta.sum * mac.h * mac.h
+
+  /**
+   * The energy per unit of density, `½ ∫ (g η² + h |u|²)`, in m⁵/s²: the potential energy of the
+   * raised or lowered surface and the kinetic energy of the flow, with the depth `h` of the
+   * water at the faces.
+   */
+  def energy: Double =
+    val u = this.u
+    val v = this.v
+    var potential = 0.0
+    var kinetic = 0.0
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val e = eta(i, j)
+        potential += e * e
+        if openU(i, j) != 0.0 then
+          val west = if i > 0 then thickness(i - 1, j) else thickness(nx - 1, j)
+          kinetic += 0.5 * (west + thickness(i, j)) * u(i, j) * u(i, j)
+        if j > 0 && openV(i, j) != 0.0 then
+          kinetic += 0.5 * (thickness(i, j - 1) + thickness(i, j)) * v(i, j) * v(i, j)
+        i += 1
+      j += 1
+    0.5 * (gravityNow * potential + kinetic) * mac.h * mac.h
+
+  /** The largest speed at a cell centre, in m/s. */
+  def maxSpeed: Double =
+    val u = this.u
+    val v = this.v
+    var m = 0.0
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val a = 0.5 * (u(i, j) + u(i + 1, j))
+        val b = 0.5 * (v(i, j) + v(i, j + 1))
+        m = math.max(m, a * a + b * b)
+        i += 1
+      j += 1
+    math.sqrt(m)
 
   /**
    * Shapes the sea floor, see [[ShallowParams.seabed]]: 1 is a shelf that is flat to 55% of the
@@ -574,6 +646,7 @@ object Shallow extends Model[ShallowParams]:
 
   def init(p: ShallowParams, rng: SplittableRng): ShallowState =
     val state = new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
+    state.configure(p)
     state.seabed(p.seabed)
     if p.edges == OpenSea then state.sponge(p.sponge)
     p.start match
@@ -592,4 +665,51 @@ object Shallow extends Model[ShallowParams]:
       state.v.digestInto(state.u.digestInto(state.eta.digestInto(Digest.start)))
     )
 
-  val probes: Vector[Probe[ShallowState]] = Vector.empty
+  override def accepts(iv: Intervention): Either[String, Unit] = iv match
+    case Intervention.Brush("land" | "height", _, _, _) => Right(())
+    case Intervention.Pulse("height", _, _, _, _) => Right(())
+    case Intervention.Brush(target, _, _, _) =>
+      Left(s"shallow water has no field '$target' to paint (use 'land' or 'height')")
+    case Intervention.Pulse(target, _, _, _, _) =>
+      Left(s"shallow water has no field '$target' to pulse (use 'height')")
+    case _: Intervention.Disturb => Left("shallow water has no agents to disturb")
+
+  /**
+   * `Brush("land")` paints land (the water in those cells is lost with them) or, with `Erase`,
+   * sea; `Brush("height")` sets or adds to the height of the surface; `Pulse("height")` raises
+   * or lowers it by a Gaussian. Land holds no water, so height painted on land is dropped.
+   */
+  override def intervene(
+      state: ShallowState,
+      p: ShallowParams,
+      iv: Intervention
+  ): Either[String, Unit] =
+    accepts(iv).map { _ =>
+      iv match
+        case Intervention.Brush(target, disc, op, value) =>
+          state.applyBrush(target, disc, op, value)
+        case Intervention.Pulse(_, x, y, sigma, amplitude) =>
+          state.applyPulse(x, y, sigma, amplitude)
+        case _ => ()
+    }
+
+  /** The volume of water above rest, in m³: constant unless something is painted or absorbed. */
+  val mass: Probe[ShallowState] = Probe[ShallowState]("mass", "m³")((s, _) => s.volume)
+
+  /** The energy per unit of density, in m⁵/s². */
+  val energy: Probe[ShallowState] = Probe[ShallowState]("energy", "m⁵/s²")((s, _) => s.energy)
+
+  /** The highest the surface stands above rest, in m. */
+  val maxHeight: Probe[ShallowState] =
+    Probe[ShallowState]("max_height", "m")((s, _) => s.eta.max)
+
+  /** The lowest the surface stands below rest (negative), in m. */
+  val minHeight: Probe[ShallowState] =
+    Probe[ShallowState]("min_height", "m")((s, _) => s.eta.min)
+
+  /** The fastest the water moves, in m/s. */
+  val maxSpeed: Probe[ShallowState] =
+    Probe[ShallowState]("max_speed", "m/s")((s, _) => s.maxSpeed)
+
+  val probes: Vector[Probe[ShallowState]] =
+    Vector(mass, energy, maxHeight, minHeight, maxSpeed)
