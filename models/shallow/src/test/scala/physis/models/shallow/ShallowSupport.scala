@@ -55,5 +55,11 @@ object ShallowSupport:
       val dy = j + 0.5 - y
       s.eta(i, j) += amp * math.exp(-(dx * dx + dy * dy) / (2.0 * sigma * sigma))
 
+  /** Adds a Gaussian ridge of height `amp` metres along `y` at cell position `x`: a 1D wave. */
+  def ridge(s: ShallowState, x: Double, sigma: Double, amp: Double): Unit =
+    for j <- 0 until s.mac.ny; i <- 0 until s.mac.nx do
+      val dx = i + 0.5 - x
+      s.eta(i, j) += amp * math.exp(-(dx * dx) / (2.0 * sigma * sigma))
+
   /** The volume of water above rest, in m³. */
   def volume(s: ShallowState): Double = s.eta.sum * s.mac.h * s.mac.h
