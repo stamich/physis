@@ -1,6 +1,7 @@
 package physis.models.shallow
 
 import physis.core.{Digest, Model, Probe, StepContext, Stepping}
+import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
 import physis.core.run.{Disc, Intervention, Op}
@@ -220,6 +221,7 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   private val vAtU = new Field2D(mac.uFaces)
   private val uAtV = new Field2D(mac.vFaces)
   private val divergence = new Field2D(mac.cells)
+  private val scratchC = new Field2D(mac.cells)
 
   // What an absorbing strip keeps of a value in one step, at the cells and at the two kinds of
   // faces; null while there is no strip.
@@ -443,6 +445,55 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     val _ = Pulse.stamp(eta, x, y, sigma, amplitude, wrapX, false)
     clearLand()
 
+  /** Writes the height of the surface, row by row, from `offset`. */
+  def heightInto(out: Array[Double], offset: Int): Unit =
+    eta.copyInteriorInto(out, offset)
+
+  /** Writes the depth of the water at rest, row by row, from `offset`. */
+  def depthInto(out: Array[Double], offset: Int): Unit =
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        out(k) = depthNow * shape(i, j)
+        k += 1
+        i += 1
+      j += 1
+
+  /** Writes the speed at the cell centres, row by row, from `offset`. */
+  def speedInto(out: Array[Double], offset: Int): Unit =
+    val u = this.u
+    val v = this.v
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val a = 0.5 * (u(i, j) + u(i + 1, j))
+        val b = 0.5 * (v(i, j) + v(i, j + 1))
+        out(k) = math.sqrt(a * a + b * b)
+        k += 1
+        i += 1
+      j += 1
+
+  /**
+   * Writes the relative vorticity `∂v/∂x - ∂u/∂y` of the flow seen from above with north up
+   * (positive is counter-clockwise), at the cell centres, row by row, from `offset`. The model's
+   * `y` and `v` run south, which turns the sign of the plain curl.
+   */
+  def vorticityInto(out: Array[Double], offset: Int): Unit =
+    Mac.vorticity(u, v, scratchC, wrapX, false)
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        out(k) = -scratchC(i, j)
+        k += 1
+        i += 1
+      j += 1
+
   /** The volume of water above rest, `∫ η`, in m³. */
   def volume: Double = eta.sum * mac.h * mac.h
 
@@ -562,6 +613,30 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           i += 1
       j += 1
     closeFaces()
+
+object ShallowState:
+  /** Live runs export the height, the speed, the vorticity, the depth and the land. */
+  given stateExport: StateExport[ShallowState] with
+    def size(state: ShallowState): Int = 5 * state.mac.cells.cells
+
+    def copyInto(state: ShallowState, out: Array[Double]): Unit =
+      val n = state.mac.cells.cells
+      state.heightInto(out, 0)
+      state.speedInto(out, n)
+      state.vorticityInto(out, 2 * n)
+      state.depthInto(out, 3 * n)
+      state.land.field.copyInteriorInto(out, 4 * n)
+
+    override def layout(state: ShallowState): IndexedSeq[Slice] =
+      val g = state.mac.cells
+      val n = g.cells
+      Vector(
+        Slice("height", 0, g.nx, g.ny),
+        Slice("speed", n, g.nx, g.ny),
+        Slice("vorticity", 2 * n, g.nx, g.ny),
+        Slice("depth", 3 * n, g.nx, g.ny),
+        Slice("land", 4 * n, g.nx, g.ny)
+      )
 
 object Shallow extends Model[ShallowParams]:
   type State = ShallowState
