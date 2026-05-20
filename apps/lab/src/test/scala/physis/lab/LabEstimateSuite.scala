@@ -21,7 +21,12 @@ class LabEstimateSuite extends munit.FunSuite:
 
   test("the estimate of a file is its size to the byte, and its frames are exact") {
     for (model, colorBar, scale) <-
-        Seq((Catalog.fluid, true, 1), (Catalog.wave, false, 2), (Catalog.convection, true, 1))
+        Seq(
+          (Catalog.fluid, true, 1),
+          (Catalog.wave, false, 2),
+          (Catalog.convection, true, 1),
+          (Catalog.shallow, true, 1)
+        )
     do
       val (s, shot) = stepped(model, 12)
       try
@@ -80,7 +85,14 @@ class LabEstimateSuite extends munit.FunSuite:
 
   test("every field model suggests a length that fits, whatever the session length") {
     for m <-
-        Seq(Catalog.grayScott, Catalog.wave, Catalog.physarum, Catalog.fluid, Catalog.convection)
+        Seq(
+          Catalog.grayScott,
+          Catalog.wave,
+          Catalog.physarum,
+          Catalog.fluid,
+          Catalog.convection,
+          Catalog.shallow
+        )
     do
       for steps <- Seq(1L, 2L, 3L, 10L, 99L, 800L, 5000L, 100000L) do
         val o = LabAnimations.suggest(steps, m.animationDefaults, cells = 256)

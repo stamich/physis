@@ -19,6 +19,7 @@ import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, Gray
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
 import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
+import physis.models.shallow.{Shallow, ShallowParams, ShallowPresets, ShallowState, ShallowViews}
 import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
 import physis.view.{Dab, Frames, View}
@@ -434,9 +435,66 @@ object Catalog:
     animation = AnimationDefaults(every = 100, fps = 20)
   )
 
+  /**
+   * One step is 50 s of the sea, so the speed, in seconds of the sea a second, is 50 times the
+   * steps a second. The sea is painted in metres: a rise or a dip of the surface, with the right
+   * button the other way round, and land, which the water goes round.
+   */
+  val shallow: LabModel = new ModelEntry[ShallowParams, ShallowState](
+    "Shallow water",
+    Shallow,
+    Shallow.stepping,
+    Shallow.probes,
+    ShallowViews.lab,
+    ShallowState.stateExport,
+    ShallowPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+    SpeedRange(500.0, 30000.0, 6000.0, s => f"${s / Shallow.Dt}%.0f steps/s"),
+    tools = Vector(
+      LabTool(
+        ToolSpec("Uplift", Some("metres"), 1.0, (0.05, 5.0), (1.0, 20.0), 3.0),
+        (d, r, v, secondary) =>
+          Intervention.Pulse(
+            "height",
+            d.x,
+            d.y,
+            math.max(1.0, r / 2.5),
+            if secondary then -v else v
+          )
+      ),
+      LabTool(
+        ToolSpec("Drop", Some("metres"), 1.0, (0.05, 5.0), (1.0, 20.0), 3.0),
+        (d, r, v, secondary) =>
+          Intervention.Pulse(
+            "height",
+            d.x,
+            d.y,
+            math.max(1.0, r / 2.5),
+            if secondary then v else -v
+          )
+      ),
+      LabTool(
+        ToolSpec("Land", None, 0.0, (0.0, 0.0), (1.0, 20.0), 3.0),
+        (d, r, _, secondary) =>
+          Intervention.Brush(
+            "land",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            1.0
+          )
+      ),
+      LabTool(
+        ToolSpec("Erase land", None, 0.0, (0.0, 0.0), (1.0, 20.0), 6.0),
+        (d, r, _, _) => Intervention.Brush("land", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      )
+    ),
+    wrap = p => p.getOrElse("edges", 0.0) == Shallow.Channel.toDouble,
+    painted = ShallowPresets.all.map(p => p.name -> p.interventions).toMap,
+    animation = AnimationDefaults(every = 10, fps = 20)
+  )
+
   /** In menu order; the first one opens at start. */
   val models: Vector[LabModel] =
-    Vector(lorenz, pendulum, grayScott, boids, wave, physarum, fluid, convection)
+    Vector(lorenz, pendulum, grayScott, boids, wave, physarum, fluid, convection, shallow)
 
   /** Models by id, for replaying manifests. */
   val registry: ModelRegistry =
@@ -448,5 +506,6 @@ object Catalog:
       Wave,
       Physarum,
       Fluid,
-      Convection
+      Convection,
+      Shallow
     )

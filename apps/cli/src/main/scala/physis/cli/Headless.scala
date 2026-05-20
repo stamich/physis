@@ -25,6 +25,7 @@ import physis.models.convection.{
   ConvectionState,
   ConvectionViews
 }
+import physis.models.shallow.{Shallow, ShallowParams, ShallowPresets, ShallowState, ShallowViews}
 import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
@@ -60,7 +61,7 @@ object Headless:
   val Usage: String =
     """Usage: RunHeadless [options]
       |  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid |
-      |                         convection (default: lorenz)
+      |                         convection | shallow (default: lorenz)
       |  --list                 list the models with their parameters and exit
       |  --preset <name>        start from a preset of the model (see describe); --param
       |                         values are applied after it
@@ -80,7 +81,7 @@ object Headless:
       |                         strokes; other options are ignored except --frames, --animate,
       |                         --manifest and --stroke (more strokes end the digest check)
       |
-      |Frames (gray-scott, wave, physarum, fluid, convection): numbered PNGs of the first image of the view
+      |Frames (gray-scott, wave, physarum, fluid, convection, shallow): numbered PNGs of the first image of the view
       |  --frames <dir>         write the frames into <dir> instead of printing a CSV
       |  --animate <file>       write the frames as one animated PNG instead
       |  --fps <n>              frames per second of the animation, 1 to 65535 (default: 12)
@@ -213,6 +214,14 @@ object Headless:
       Some(Image(ConvectionState.stateExport, ConvectionViews.lab)),
       ConvectionPresets.all.map(p => Preset(p.name, p.params, p.doc)),
       ConvectionPresets.all.map(p => p.name -> p.interventions).toMap
+    ),
+    Shallow.id -> Entry[ShallowParams, ShallowState](
+      Shallow,
+      _ => Shallow.probes,
+      Shallow.stepping,
+      Some(Image(ShallowState.stateExport, ShallowViews.lab)),
+      ShallowPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+      ShallowPresets.all.map(p => p.name -> p.interventions).toMap
     )
   )
 

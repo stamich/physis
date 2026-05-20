@@ -96,7 +96,8 @@ class CliSuite extends munit.FunSuite:
         "wave",
         "physarum",
         "fluid",
-        "convection"
+        "convection",
+        "shallow"
       )
     for id <- models do assert(listing.contains(s"$id (version "), id)
     for id <- models do
