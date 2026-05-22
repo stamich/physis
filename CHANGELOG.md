@@ -2,6 +2,74 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.8.0 — shallow water
+
+Shallow water on a rotating plane: gravity waves, geostrophic adjustment, Kelvin and Rossby waves
+and a tsunami that slows down and grows on a shelf. Models of earlier milestones are unchanged
+and their digests are the same.
+
+### Added
+
+- **fields**: `Staggered`, the operators of a layer of water on the staggered grid: open faces
+  between sea cells, the means of a cell value to a face, and the four-point means of one velocity
+  at the faces of the other, for the Coriolis term; [docs/numerics.md](docs/numerics.md).
+- **models/shallow**: the `shallow` model, version 0.8.0: a forward–backward step with the mass
+  equation in flux form, so that the volume is conserved to rounding; a Coriolis parameter with the
+  beta effect; bottom friction; the nonlinear mode (depth `h + η`, semi-Lagrangian advection of
+  the flow); channel, closed basin and open sea with an absorbing strip; a flat sea floor, a
+  shelf and a seamount; starts at rest, from a front or from a Rossby wave; land and height as
+  targets of strokes; probes of the mass, the energy, the highest and lowest surface and the
+  fastest water; five presets (Tsunami, Adjustment, Rossby wave, Kelvin wave, Harbour); views of
+  the height, the speed, the vorticity and the depth;
+  [docs/models/shallow.md](docs/models/shallow.md).
+- **Lab**: Shallow water with the tools Uplift, Drop, Land and Erase land, the presets, and
+  Save animation (a picture every 10 steps).
+- **CLI**: `shallow` in `run`, `sweep`, `frames`, `animate`, `montage` and `replay`; a sweep over
+  `beta` or `gravity` is the same on any number of threads.
+- **tools**: `tools/shallow_reference.py`, an independent numpy implementation of the linear
+  scheme.
+
+### Verified
+
+- Seiche in a closed basin: the period is 1.0004 of `2L/c`, and the order of convergence is 2.00
+  (the numpy numbers; the Scala tests take the same cases).
+- Wave speed: the crest moves at 0.989 of `√(g h)`; a tsunami crest arrives at 15 300 s
+  against 15 145 s expected.
+- Geostrophic adjustment: the width of the current is 44.6 cells against the Rossby radius of
+  44.3, the height at the front is half the step, and the time-mean current is within 1.4 % of the
+  geostrophic one.
+- Kelvin wave: 44.05 m/s against 44.29; the wave goes south along a west coast and not north
+  (0.23 of the height), and with the sign of `f` reversed it goes the other way.
+- Rossby wave: the phase of the pattern is 1.004 and 0.992 of the dispersion relation after 8000
+  and 12 000 steps, and does not move without `β`.
+- Shoaling: the wave grows by 1.311 where Green's law gives 1.326.
+- The open sea leaves 8·10⁻⁴ of the energy of a pulse; the volume of a closed sea is constant to
+  rounding; a step allocates nothing.
+
+### Differences from the plan
+
+- A fixed step of 50 s with a stability check (Courant number at most 0.7, `f dt` and `r dt` at
+  most 0.5) in place of a Courant number as a parameter: the model refuses a run that would
+  break, and the step stays part of the model, as in the fluid and the convection model.
+- North is at the top of the picture (row 0), so `y` and `v` run south and the equations carry
+  that sign. The first version had the rotation mirrored on screen; the numpy reference, the
+  tests and the presets use the corrected convention.
+- No flooding: a cell whose depth would be negative is held dry. The plan's wetting and drying is
+  left for later.
+- The numpy reference is linear. The nonlinear mode is tested for conservation and for the
+  right limit at small amplitude, not against another implementation.
+- No NetCDF export; it is in 0.9.0.
+
+### Not measured
+
+- How the Lab looks and feels with the shallow sea on a real display (CI has no GPU), and
+  whether the speed range of 10 to 600 steps/s suits a slower machine.
+- Anything above 256 × 256 cells; the speed bars in `ShallowSpeedSuite` are set far below what is
+  expected and are not calibrated against the CI runners yet.
+- The nonlinear mode in strong breaking or against published runup results; the Tsunami and the
+  Harbour presets are checked to run, stay finite and replay, not against measurements.
+- Spherical geometry, tides and real coastlines.
+
 ## 0.7.0 — convection
 
 Rayleigh–Bénard convection: a layer of fluid heated from below and cooled from above, which stays
