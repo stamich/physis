@@ -19,7 +19,7 @@ The distribution needs a Java 22 or newer on the path. The examples below leave 
 | Command | What it does |
 | --- | --- |
 | `run` | runs a model and prints its probes as CSV |
-| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid, convection) |
+| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid, convection, shallow) |
 | `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`) |
 | `sweep` | one run per point of a grid, results in grid order, as CSV |
 | `montage <png>` | a sweep that also tiles the final images of all points into one PNG |
@@ -40,9 +40,9 @@ physis-cli replay run.json
 ## Parameters and presets
 
 `--param name=value` overrides a parameter. `--preset <name>` starts from a preset of the model
-(see `describe`; gray-scott, boids, physarum, fluid and convection have them; a preset of the
-fluid also paints its walls and dye, and a preset of convection its heat, and they are recorded in
-the manifest), and `--param` is applied after it, so
+(see `describe`; gray-scott, boids, physarum, fluid, convection and shallow have them; a preset of
+the fluid also paints its walls and dye, a preset of convection its heat and one of shallow its
+raised water or its land, and they are recorded in the manifest), and `--param` is applied after it, so
 a preset can be varied.
 
 ```bash
@@ -152,6 +152,20 @@ The first command scans the Rayleigh number: at 1200 the `nusselt` column of the
 the same on any number of threads. The second animates a layer between periodic sides; a preset of
 convection paints its heat as ordinary strokes, and the manifest replays to the same digest and the
 same animation. The model and its checks are described in [models/convection.md](models/convection.md).
+
+## Shallow water
+
+```bash
+physis-cli sweep --model shallow --param start=2 --param amp=0.1 --param depth=500 --param dx=50000 --param edges=0 --sweep beta=0,4e-11 --until 20000 --sample-every 1000
+physis-cli sweep --model shallow --param start=1 --sweep gravity=5,10 --until 3000 --sample-every 1000
+physis-cli animate harbour.png --model shallow --preset Harbour --steps 600 --every 20
+```
+
+The first command runs a Rossby wave (the settings of the preset of that name) with and without `β`; the second scans gravity, which sets
+the wave speed. The third animates the harbour: the wave front, the breakwater and the island are
+ordinary strokes in the manifest, which replays to the same digest and the same animation. The
+`sweep` over `nx` or `ny` with a painted preset is refused, as for the fluid. The model and its
+checks are described in [models/shallow.md](models/shallow.md).
 
 ## Replay
 

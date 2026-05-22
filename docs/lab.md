@@ -21,7 +21,7 @@ for the current platform (Linux, macOS, Windows; x64 and arm64) by the build.
 | Area | Contents |
 | --- | --- |
 | Left | model picker, presets, parameter panel, tool box, seed field, run controls |
-| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude; Physarum: the trail with the agents as white dots above coverage and structures; Fluids: the dye with the tracer particles as faint white dots above kinetic energy and enstrophy; Convection: the temperature above kinetic energy and Nusselt number) |
+| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization; Waves: the wave with its walls in grey above energy and amplitude; Physarum: the trail with the agents as white dots above coverage and structures; Fluids: the dye with the tracer particles as faint white dots above kinetic energy and enstrophy; Convection: the temperature above kinetic energy and Nusselt number; Shallow water: the surface height above energy and highest surface) |
 | Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; the value of the heatmap cell under the pointer; status messages |
 | Menu | File → Save manifest…, Replay manifest…, Close |
 
@@ -83,12 +83,12 @@ happened, and the result is the same bytes as `physis-cli replay <manifest> --an
 same settings. The session keeps running meanwhile, and switching model does not disturb the save.
 The status line and a progress bar show the frames written and the time left; **Cancel** stops it
 and removes the file. Closing the window cancels it too. A fluid replay is slow (about 4 steps a
-second at 256 × 256; a convection layer of 96 × 48 does about 450), so look at the estimate first. Problems (nothing has run yet, a path that
+second at 256 × 256; a convection layer of 96 × 48 does about 450; the shallow-water sea is the cheapest of the fields), so look at the estimate first. Problems (nothing has run yet, a path that
 cannot be written) appear in the status line.
 
 ## Painting
 
-Gray–Scott, Boids, Waves, Physarum, Fluids and Convection have a **tool box** under the parameters. At first no tool is on and
+Gray–Scott, Boids, Waves, Physarum, Fluids, Convection and Shallow water have a **tool box** under the parameters. At first no tool is on and
 the pointer only reads cells. Choosing a tool turns the brush on: a ring follows the pointer and
 shows its radius.
 
@@ -100,6 +100,7 @@ shows its radius.
 | Physarum | **Paint food** (right button erases), **Erase food**, **Paint trail** |
 | Fluids | **Smoke** (dye, right button erases), **Push sideways** and **Push up** (value: speed, right button pushes the other way), **Wall** (right button erases), **Erase wall** |
 | Convection | **Heat spot** and **Cool spot** (value: how much warmer or colder than conduction; the right button resets the place), **Wall** (right button erases), **Erase wall** |
+| Shallow water | **Uplift** and **Drop** (value: metres; the right button does the opposite), **Land** (right button erases), **Erase land** |
 
 The left button applies the tool and dragging paints a line; the right button erases where the
 tool paints. The mouse wheel over the view changes the radius, the slider and the value field do

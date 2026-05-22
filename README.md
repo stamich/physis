@@ -28,7 +28,10 @@ replayed in the background into an animated PNG, with an estimate, progress and 
 same bytes as `physis-cli replay --animate`. Milestone 0.7.0 adds **convection**: a fluid heated from
 below forms rolls and plumes (Rayleigh–Bénard), with temperature as a field the flow carries, the
 Nusselt number as a probe, checked against the critical Rayleigh number 1708 and a numpy reference;
-the Lab paints heat and cold into it and `physis-cli sweep` scans the Rayleigh number.
+the Lab paints heat and cold into it and `physis-cli sweep` scans the Rayleigh number. Milestone 0.8.0 adds
+**shallow water** on a rotating plane: gravity waves, geostrophic adjustment, Kelvin and Rossby waves
+and a tsunami that slows down on a shelf, checked against the wave speed, the Rossby radius and the
+Rossby dispersion relation and a numpy reference; the Lab paints uplifts, dips and land into it.
 
 ## Modules
 
@@ -46,6 +49,7 @@ the Lab paints heat and cold into it and `physis-cli sweep` scans the Rayleigh n
 | `models/physarum` | Physarum agents on a trail, with presets for networks, meshes and spots |
 | `models/fluid` | incompressible flow on a staggered grid: cavity, cylinder wake, smoke, vortex pair |
 | `models/convection` | Rayleigh–Bénard convection: rolls and plumes in a layer heated from below |
+| `models/shallow` | shallow water on a rotating plane: tsunami, Kelvin and Rossby waves, geostrophic balance |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -64,7 +68,7 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves, Physarum, fluids and convection, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves, Physarum, fluids, convection and shallow water, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
