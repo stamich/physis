@@ -20,13 +20,14 @@ dependencyResolutionManagement {
 
 rootProject.name = "physis"
 
-include(":core", ":ode", ":verify", ":view", ":fx", ":fields")
+include(":core", ":ode", ":verify", ":view", ":fx", ":fields", ":netcdf")
 project(":core").projectDir = file("modules/core")
 project(":ode").projectDir = file("modules/ode")
 project(":verify").projectDir = file("modules/verify")
 project(":view").projectDir = file("modules/view")
 project(":fx").projectDir = file("modules/fx")
 project(":fields").projectDir = file("modules/fields")
+project(":netcdf").projectDir = file("modules/netcdf")
 
 include(":models:lorenz", ":models:pendulum", ":models:grayscott", ":models:boids", ":models:wave", ":models:physarum", ":models:fluid", ":models:convection", ":models:shallow")
 include(":apps:cli")
