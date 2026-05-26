@@ -85,31 +85,28 @@ final case class Schema(
   /** `Right(this)` if the structure can be written as a classic NetCDF file. */
   def validate: Either[String, Schema] =
     val names = dims.map(_.name)
-    val problems = Vector.newBuilder[String]
-    (names ++ vars.map(_.name)).foreach { n =>
-      if !Schema.validName(n) then problems += s"bad name '$n'"
-    }
-    names.diff(names.distinct).distinct.foreach(n => problems += s"dimension '$n' twice")
-    vars.map(_.name).diff(vars.map(_.name).distinct).distinct.foreach(n =>
-      problems += s"variable '$n' twice"
-    )
-    if dims.count(_.isRecord) > 1 then problems += "more than one record dimension"
-    dims.foreach {
-      case Dim(n, Some(s)) if s < 1 => problems += s"dimension '$n' has size $s"
-      case _ => ()
-    }
-    vars.foreach { v =>
-      v.dims.foreach(d => if dim(d).isEmpty then problems += s"'${v.name}': no dimension '$d'")
-      if v.dims.drop(1).exists(d => dim(d).exists(_.isRecord)) then
-        problems += s"'${v.name}': the record dimension must come first"
-      if v.dims.distinct.size != v.dims.size then problems += s"'${v.name}': a dimension twice"
-      if v.tpe == NcType.Text then problems += s"'${v.name}': variables are numbers, not text"
-      Schema.attrProblems(v.name, v.attrs, problems)
-    }
-    Schema.attrProblems("file", globals, problems)
-    problems.result() match
-      case Vector() => Right(this)
-      case first +: _ => Left(first)
+    val varNames = vars.map(_.name)
+    val problems =
+      (names ++ varNames).filterNot(Schema.validName).map(n => s"bad name '$n'") ++
+        names.diff(names.distinct).distinct.map(n => s"dimension '$n' twice") ++
+        varNames.diff(varNames.distinct).distinct.map(n => s"variable '$n' twice") ++
+        (if dims.count(_.isRecord) > 1 then Vector("more than one record dimension")
+         else Vector.empty) ++
+        dims.collect { case Dim(n, Some(s)) if s < 1 => s"dimension '$n' has size $s" } ++
+        vars.flatMap(variableProblems) ++
+        Schema.attrProblems("file", globals)
+    problems.headOption.toLeft(this)
+
+  private def variableProblems(v: Var): Vector[String] =
+    v.dims.filter(d => dim(d).isEmpty).map(d => s"'${v.name}': no dimension '$d'") ++
+      (if v.dims.drop(1).exists(d => dim(d).exists(_.isRecord)) then
+         Vector(s"'${v.name}': the record dimension must come first")
+       else Vector.empty) ++
+      (if v.dims.distinct.size != v.dims.size then Vector(s"'${v.name}': a dimension twice")
+       else Vector.empty) ++
+      (if v.tpe == NcType.Text then Vector(s"'${v.name}': variables are numbers, not text")
+       else Vector.empty) ++
+      Schema.attrProblems(v.name, v.attrs)
 
 object Schema:
   /** NetCDF names: a letter or underscore, then letters, digits and `_ . @ + -`. */
@@ -118,18 +115,14 @@ object Schema:
       (name.head.isLetter && name.head < 128 || name.head == '_') &&
       name.forall(c => c < 128 && (c.isLetterOrDigit || "_.@+-".contains(c)))
 
-  private def attrProblems(
-      owner: String,
-      attrs: Vector[Attr],
-      problems: scala.collection.mutable.Builder[String, Vector[String]]
-  ): Unit =
-    attrs.map(_.name).diff(attrs.map(_.name).distinct).distinct.foreach(n =>
-      problems += s"$owner: attribute '$n' twice"
-    )
-    attrs.foreach { a =>
-      if !validName(a.name) then problems += s"$owner: bad attribute name '${a.name}'"
-      a.value match
-        case AttrValue.Ints(v) if v.isEmpty => problems += s"$owner: '${a.name}' is empty"
-        case AttrValue.Doubles(v) if v.isEmpty => problems += s"$owner: '${a.name}' is empty"
-        case _ => ()
-    }
+  private def attrProblems(owner: String, attrs: Vector[Attr]): Vector[String] =
+    val names = attrs.map(_.name)
+    names.diff(names.distinct).distinct.map(n => s"$owner: attribute '$n' twice") ++
+      attrs.flatMap { a =>
+        (if validName(a.name) then Vector.empty
+         else Vector(s"$owner: bad attribute name '${a.name}'")) ++
+          (a.value match
+            case AttrValue.Ints(v) if v.isEmpty => Vector(s"$owner: '${a.name}' is empty")
+            case AttrValue.Doubles(v) if v.isEmpty => Vector(s"$owner: '${a.name}' is empty")
+            case _ => Vector.empty)
+      }
