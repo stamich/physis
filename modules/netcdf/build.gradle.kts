@@ -7,4 +7,7 @@ description = "Physis NetCDF: a writer and a reader for the classic file format 
 dependencies {
     api(project(":core"))
     testImplementation(project(":verify"))
+    testImplementation(project(":ode"))
+    testImplementation(project(":models:lorenz"))
+    testImplementation(project(":models:shallow"))
 }
