@@ -34,6 +34,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
+import physis.netcdf.{Attr, NcExport}
 import physis.view.{Frame, Frames, Montage, Png, View}
 
 /**
@@ -91,6 +92,13 @@ object Headless:
       |  --no-color-bar         leave out the colour scale at the right
       |  --compress             deflate the PNG data (smaller files, same pixels)
       |
+      |Datasets (all models): a NetCDF file of the run, read by xarray, Panoply and ParaView
+      |  --export <file.nc>     write time, step, a digest of the state, the fields and the
+      |                         probes every --every steps instead of printing a CSV; the
+      |                         manifest is inside the file
+      |  --vars <a,b,...>       only these fields and probes
+      |  --float                fields as 32-bit floats (half the size)
+      |
       |Sweeps: the product of the axes, one run per point, results in grid order
       |  --sweep <axis>         name=a:b:n | name=log:a:b:n | name=a,b,c | seed=a..b (repeatable)
       |  --threads <n>          runs at the same time (default: one per processor)
@@ -128,6 +136,9 @@ object Headless:
       interventions: Vector[InterventionEvent] = Vector.empty,
       frames: Option[Path] = None,
       animate: Option[Path] = None,
+      dataset: Option[Path] = None,
+      vars: Option[Set[String]] = None,
+      single: Boolean = false,
       fps: Int = 12,
       loops: Int = 0,
       strokes: Vector[InterventionEvent] = Vector.empty,
@@ -278,6 +289,13 @@ object Headless:
         whole(v, "--threads", 1L).flatMap(n => parse(rest, options.copy(threads = Some(n.toInt))))
       case "--frames" :: path :: rest => parse(rest, options.copy(frames = Some(Path.of(path))))
       case "--animate" :: path :: rest => parse(rest, options.copy(animate = Some(Path.of(path))))
+      case "--export" :: path :: rest => parse(rest, options.copy(dataset = Some(Path.of(path))))
+      case "--vars" :: names :: rest =>
+        parse(
+          rest,
+          options.copy(vars = Some(names.split(",").map(_.trim).filter(_.nonEmpty).toSet))
+        )
+      case "--float" :: rest => parse(rest, options.copy(single = true))
       case "--fps" :: v :: rest =>
         whole(v, "--fps", 1L)
           .filterOrElse(_ <= 65535L, s"--fps must be at most 65535, got $v")
@@ -343,6 +361,9 @@ object Headless:
               interventions = m.interventions,
               frames = options.frames,
               animate = options.animate,
+              dataset = options.dataset,
+              vars = options.vars,
+              single = options.single,
               fps = options.fps,
               loops = options.loops,
               manifest = options.manifest,
@@ -442,10 +463,11 @@ object Headless:
       try
         if o.sweep.nonEmpty then sweep(entry, o, out, err)
         else
-          (o.animate, o.frames) match
-            case (Some(file), _) => animation(entry, o, p, file, out, err)
-            case (None, Some(dir)) => frames(entry, o, p, dir, out, err)
-            case (None, None) => runAndPrint(entry, o, p, out, err)
+          (o.dataset, o.animate, o.frames) match
+            case (Some(file), _, _) => dataset(entry, o, p, file, out, err)
+            case (None, Some(file), _) => animation(entry, o, p, file, out, err)
+            case (None, None, Some(dir)) => frames(entry, o, p, dir, out, err)
+            case (None, None, None) => runAndPrint(entry, o, p, out, err)
       catch case e: IllegalArgumentException => Left(e.getMessage)
     }
 
@@ -573,6 +595,54 @@ object Headless:
           writeManifest(o, run, steps, dt)
           digestCheck(o, run.digest, err)
         }
+      }
+    }
+
+  /**
+   * The run as a NetCDF dataset: fields, probes, time and a digest of the state at every
+   * `--every` steps, with the manifest of the run in the file. Its path is printed.
+   */
+  private def dataset(
+      entry: Entry[Any, Any],
+      o: Options,
+      p: Any,
+      file: Path,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    Datasets.of(o.model).toRight(s"model '${o.model}' cannot be exported").flatMap { data =>
+      val fixed: Either[String, Double] = o.steppingFor(entry.stepping) match
+        case Stepping.Fixed(dt) => Right(dt)
+        case _ => Left("datasets need fixed steps")
+      fixed.flatMap { dt =>
+        val run = build(entry, o, p, probes = false)
+        val steps = o.steps.getOrElse(math.round(o.until / dt))
+        val every = o.every.getOrElse(math.max(1L, steps / 10))
+        // nothing has run yet, so the run has recorded no event or stroke: the manifest is
+        // told the ones that are scheduled, as the replay of the file will need them
+        val manifest = run
+          .manifest(steps * dt)
+          .copy(
+            steps = Some(steps),
+            events = o.events,
+            interventions = (o.interventions ++ o.strokes).sortBy(_.step)
+          )
+        val options = NcExport.Options(
+          every,
+          o.single,
+          o.vars,
+          Vector(Attr.text("physis_manifest", Manifest.toJson(manifest)))
+        )
+        NcExport.write(run, steps, data.exporter, data.spec(p), entry.probes(p), file, options)
+          .map { n =>
+            out.println(file.toString)
+            err.println(
+              s"# dataset of ${o.model} in $file: $n records, $steps steps, every $every" +
+                (if o.single then ", single precision" else "")
+            )
+            writeManifest(o, run, steps, dt)
+            digestCheck(o, run.digest, err)
+          }
       }
     }
 
