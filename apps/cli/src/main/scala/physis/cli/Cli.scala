@@ -16,6 +16,9 @@ object Plan:
   /** The parameters, presets and probes of one model. */
   final case class Describe(model: String) extends Plan
 
+  /** Check a dataset against a replay of the manifest inside it. */
+  final case class Verify(file: String) extends Plan
+
   /** Run the engine with these (checked) options of [[Headless]]. */
   final case class Engine(args: List[String]) extends Plan
 
@@ -61,6 +64,7 @@ object Cli:
       |  frames <dir>        write numbered PNGs of a run into <dir>
       |  animate <file>      write the frames of a run as one animated PNG
       |  export <file>       write a run as a NetCDF dataset: fields, probes, time
+      |  verify <file>       replay the manifest inside a dataset and compare every value
       |  sweep               run a grid of parameters, one run per point, and print a CSV
       |  montage <png>       like sweep, and tile the final images of all points into <png>
       |  replay <manifest>   re-run a manifest, with its changes and strokes
@@ -148,6 +152,11 @@ object Cli:
         "for export)\n" +
         "  --stroke <spec>        more strokes (they end the digest check), --manifest <path> " +
         "records the result"
+    case "verify" =>
+      "Usage: physis-cli verify <file.nc>\n\nReads the manifest inside a dataset written by " +
+        "export, runs it again with the same --every, precision and variables, and compares " +
+        "every value with the file, bit for bit (attributes, which hold the version of the " +
+        "program, are not compared). Exit code 0 if they agree, 1 if not."
     case "list" => "Usage: physis-cli list\n\nLists the models with their parameters."
     case "describe" =>
       "Usage: physis-cli describe <model>\n\nParameters with range and unit, presets, probes, " +
@@ -184,6 +193,8 @@ object Cli:
       positional("replay", "a manifest file", rest).flatMap { (file, more) =>
         checked("replay", more, replaySpec).map(a => Plan.Engine("--replay" :: file :: a))
       }
+    case "verify" :: file :: Nil if !file.startsWith("-") => Right(Plan.Verify(file))
+    case "verify" :: _ => Left("verify takes one file: physis-cli verify <file.nc>")
     case "list" :: Nil => Right(Plan.Engine(List("--list")))
     case "list" :: _ => Left("list takes no arguments")
     case "describe" :: id :: Nil if !id.startsWith("-") => Right(Plan.Describe(id))
@@ -198,7 +209,18 @@ object Cli:
     else "--progress" :: args
 
   val Commands: Vector[String] =
-    Vector("run", "frames", "animate", "export", "sweep", "montage", "replay", "list", "describe")
+    Vector(
+      "run",
+      "frames",
+      "animate",
+      "export",
+      "verify",
+      "sweep",
+      "montage",
+      "replay",
+      "list",
+      "describe"
+    )
 
   private def sweep(command: String, args: List[String], spec: Spec): Either[String, List[String]] =
     checked(command, args, spec).flatMap { a =>
@@ -243,6 +265,7 @@ object Cli:
       case Right(Plan.Version) =>
         out.println(s"physis-cli ${BuildInfo.version}")
         0
+      case Right(Plan.Verify(file)) => Headless.verify(java.nio.file.Path.of(file), out, err)
       case Right(Plan.Describe(id)) =>
         Headless.describe(id, out) match
           case Right(()) => 0

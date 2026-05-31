@@ -34,7 +34,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
-import physis.netcdf.{Attr, NcExport}
+import physis.netcdf.{Attr, NcCompare, NcExport, NcFile}
 import physis.view.{Frame, Frames, Montage, Png, View}
 
 /**
@@ -320,6 +320,61 @@ object Headless:
       case option :: Nil if option.startsWith("--") => Left(s"$option expects a value")
       case other :: _ => Left(s"unknown argument '$other'")
 
+  /**
+   * Checks a dataset written by `export` against the run that should have made it: the manifest
+   * inside the file is replayed, with the same `--every`, precision and variables, and every
+   * value of the replay must equal the file's, bit for bit. Returns the exit code: 0 if the
+   * data agrees, 1 if it does not or the file cannot be checked.
+   */
+  def verify(path: Path, out: PrintStream, err: PrintStream): Int =
+    val temp = Files.createTempFile("physis-verify", ".nc")
+    try
+      val outcome: Either[String, String] =
+        for
+          file <- NcFile.read(path)
+          json <- file
+            .text("physis_manifest")
+            .toRight("the file has no manifest (physis_manifest): not written by physis-cli export")
+          m <- Manifest.fromJson(json)
+          every <- file
+            .text("physis_every")
+            .flatMap(_.toLongOption)
+            .toRight("the file does not say how often it was written (physis_every)")
+          base = Options(
+            dataset = Some(temp),
+            every = Some(every),
+            single = file.text("physis_precision").contains("float32"),
+            vars = file.text("physis_vars").map(_.split(",").toSet)
+          )
+          o <- fromParsed(m, base)
+          replayErr = new java.io.ByteArrayOutputStream()
+          code = run(
+            o,
+            new PrintStream(new java.io.ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+            new PrintStream(replayErr, true, StandardCharsets.UTF_8)
+          )
+          _ <- Either.cond(
+            code == 0,
+            (),
+            s"the replay failed: ${replayErr.toString(StandardCharsets.UTF_8).trim}"
+          )
+          again <- NcFile.read(temp)
+          _ <- NcCompare.diff(file, again).fold[Either[String, Unit]](Right(()))(why =>
+            Left(s"DIFFERS: $why")
+          )
+        yield s"verified: ${file.records} records, ${file.schema.vars.size} variables, " +
+          s"identical to a replay of the manifest (${file.text("physis_model").getOrElse("?")}, " +
+          s"written by ${file.text("source").getOrElse("?")})"
+      outcome match
+        case Right(message) =>
+          out.println(message)
+          0
+        case Left(why) =>
+          err.println(if why.startsWith("DIFFERS") then s"# $why" else s"error: $why")
+          1
+    finally
+      val _ = Files.deleteIfExists(temp)
+
   /** Runs with `options`, writing CSV to `out` and a summary to `err`; returns the exit code. */
   def run(options: Options, out: PrintStream, err: PrintStream): Int =
     val resolved = options.replay match
@@ -340,42 +395,44 @@ object Headless:
     val text =
       try Right(Files.readString(path, StandardCharsets.UTF_8))
       catch case e: java.io.IOException => Left(s"cannot read $path: ${e.getMessage}")
-    text.flatMap(Manifest.fromJson).flatMap { m =>
-      catalog.get(m.model) match
-        case None => Left(s"unknown model '${m.model}'")
-        case Some(entry) if entry.model.version != m.modelVersion =>
-          Left(
-            s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}"
+    text.flatMap(Manifest.fromJson).flatMap(m => fromParsed(m, options))
+
+  /** The options that replay `m`, with the output options of `options`. */
+  private def fromParsed(m: Manifest, options: Options): Either[String, Options] =
+    catalog.get(m.model) match
+      case None => Left(s"unknown model '${m.model}'")
+      case Some(entry) if entry.model.version != m.modelVersion =>
+        Left(
+          s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}"
+        )
+      case Some(_) =>
+        Right(
+          Options(
+            model = m.model,
+            params = m.params,
+            until = m.until,
+            sampleEvery = m.sampleEvery,
+            seed = m.seed,
+            exactStepping = Some(m.stepping),
+            steps = m.steps,
+            events = m.events,
+            interventions = m.interventions,
+            frames = options.frames,
+            animate = options.animate,
+            dataset = options.dataset,
+            vars = options.vars,
+            single = options.single,
+            fps = options.fps,
+            loops = options.loops,
+            manifest = options.manifest,
+            strokes = options.strokes,
+            expectedDigest = if options.strokes.isEmpty then m.digest else None,
+            every = options.every,
+            scale = options.scale,
+            colorBar = options.colorBar,
+            compress = options.compress
           )
-        case Some(_) =>
-          Right(
-            Options(
-              model = m.model,
-              params = m.params,
-              until = m.until,
-              sampleEvery = m.sampleEvery,
-              seed = m.seed,
-              exactStepping = Some(m.stepping),
-              steps = m.steps,
-              events = m.events,
-              interventions = m.interventions,
-              frames = options.frames,
-              animate = options.animate,
-              dataset = options.dataset,
-              vars = options.vars,
-              single = options.single,
-              fps = options.fps,
-              loops = options.loops,
-              manifest = options.manifest,
-              strokes = options.strokes,
-              expectedDigest = if options.strokes.isEmpty then m.digest else None,
-              every = options.every,
-              scale = options.scale,
-              colorBar = options.colorBar,
-              compress = options.compress
-            )
-          )
-    }
+        )
 
   private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Int] =
     if o.list then

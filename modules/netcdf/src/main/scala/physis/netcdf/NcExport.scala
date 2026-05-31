@@ -165,7 +165,10 @@ object NcExport:
                 Attr.text("physis_steps", steps.toString),
                 Attr.text("physis_every", options.every.toString),
                 Attr.text("physis_precision", if options.single then "float32" else "float64")
-              ) ++ options.attrs
+              ) ++ options.only.map(names =>
+                Attr.text("physis_vars", names.toVector.sorted.mkString(","))
+              ) ++
+                options.attrs
               Schema(dims, globals, vars).validate.map(s => Plan(s, fields, named, records))
 
   /**
