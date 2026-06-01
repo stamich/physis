@@ -49,8 +49,19 @@ object Cli:
   private val exportSpec = model ++ time ++ strokes ++ data
   private val sweepSpec = model ++ time ++
     Spec(
-      Set("--sweep", "--threads", "--out", "--jsonl", "--manifests", "--montage", "--scale"),
-      Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast")
+      Set(
+        "--sweep",
+        "--threads",
+        "--out",
+        "--jsonl",
+        "--manifests",
+        "--montage",
+        "--scale",
+        "--export",
+        "--every",
+        "--vars"
+      ),
+      Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast", "--float")
     )
   private val montageSpec = sweepSpec ++ Spec(Set("--montage-columns"))
   private val replaySpec =

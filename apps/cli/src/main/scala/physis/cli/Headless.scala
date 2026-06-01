@@ -843,7 +843,7 @@ object Headless:
     val results = Sweep.run(setup, grid, threads) { (run, result) =>
       if o.progress then err.println(s"# ${done.incrementAndGet()}/${grid.size}")
       val manifest =
-        if o.manifests.isDefined then
+        if o.manifests.isDefined || o.dataset.isDefined then
           Manifest.toJson(run.manifest(o.until).copy(digest = Some(result.finalDigest)))
         else ""
       val picture = entry.image
@@ -865,7 +865,10 @@ object Headless:
       val written = o.manifests match
         case Some(dir) => SweepOutput.writeManifests(dir, manifests).map(_.size)
         case None => Right(0)
-      written.flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
+      val datasets = o.dataset match
+        case Some(dir) => writeDatasets(o, manifests, dir, err)
+        case None => Right(Vector.empty[Path])
+      written.flatMap(_ => datasets).flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
         val failed = results.filter(_.outcome.isLeft)
         failed.foreach(r =>
           err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
@@ -876,6 +879,48 @@ object Headless:
         if failed.isEmpty then 0 else 1
       }
     catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
+
+  /**
+   * Writes `point-<index>.nc` into `dir` for every point that finished: the dataset of the
+   * manifest of the point, replayed with the same `--every`, `--vars` and `--float`, so each
+   * file is what `replay point-<index>.json --export` writes and `verify` accepts. The replay
+   * checks its digest against the one the sweep got.
+   */
+  private def writeDatasets(
+      o: Options,
+      results: Vector[PointResult[String]],
+      dir: Path,
+      err: PrintStream
+  ): Either[String, Vector[Path]] =
+    try
+      Files.createDirectories(dir)
+      val width = math.max(4, (results.size - 1).toString.length)
+      val sink = new PrintStream(new java.io.ByteArrayOutputStream(), true, StandardCharsets.UTF_8)
+      val written = results.flatMap { r =>
+        r.outcome.toOption.map { point =>
+          val name = s"point-${r.point.index.toString.reverse.padTo(width, '0').reverse}.nc"
+          val file = dir.resolve(name)
+          val replayErr = new java.io.ByteArrayOutputStream()
+          val result =
+            for
+              m <- Manifest.fromJson(point.extra)
+              replay <- fromParsed(m, o.copy(dataset = Some(file), manifest = None))
+              code <- execute(
+                replay,
+                sink,
+                new PrintStream(replayErr, true, StandardCharsets.UTF_8)
+              )
+              _ <- Either.cond(code == 0, (), replayErr.toString(StandardCharsets.UTF_8).trim)
+            yield file
+          result.left.map(why => s"point ${r.point.index}: $why")
+        }
+      }
+      written.collectFirst { case Left(why) => why } match
+        case Some(why) => Left(why)
+        case None =>
+          err.println(s"# ${written.size} datasets in $dir")
+          Right(written.collect { case Right(f) => f })
+    catch case e: java.io.IOException => Left(s"could not write datasets to $dir: ${e.getMessage}")
 
   /** Tiles the final pictures of a sweep into the `--montage` file, if one was asked for. */
   private def writeMontage(
