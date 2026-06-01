@@ -94,6 +94,10 @@ final class LabWindow(
   val animationItem: MenuItem = new MenuItem("Save animation…")
   animationItem.setDisable(true)
 
+  /** File → Export data…; disabled while a file is being written. */
+  val datasetItem: MenuItem = new MenuItem("Export data…")
+  datasetItem.setDisable(true)
+
   /** Progress of a Save animation and the button that stops it; shown only while one runs. */
   val animationProgress: ProgressBar = new ProgressBar(0.0)
   animationProgress.setPrefWidth(160)
@@ -119,11 +123,12 @@ final class LabWindow(
       item.setOnAction(_ => chooseAndSaveImage(factor))
       image.getItems.add(item)
     animationItem.setOnAction(_ => chooseAndSaveAnimation())
+    datasetItem.setOnAction(_ => chooseAndExportData())
     val replay = new MenuItem("Replay manifest…")
     replay.setOnAction(_ => chooseAndReplay())
     val quit = new MenuItem("Close")
     quit.setOnAction(_ => Option(root.getScene).map(_.getWindow).foreach(_.hide()))
-    new MenuBar(new Menu("File", null, save, image, animationItem, replay, quit))
+    new MenuBar(new Menu("File", null, save, image, animationItem, datasetItem, replay, quit))
 
   private def chooser(): FileChooser =
     val c = new FileChooser()
@@ -171,6 +176,99 @@ final class LabWindow(
 
   private def refreshAnimationItem(): Unit =
     animationItem.setDisable(exporting.isDefined || !running.exists(_.session.hasImage))
+    datasetItem.setDisable(exporting.isDefined || running.isEmpty)
+
+  private def chooseAndExportData(): Unit =
+    for r <- running if exporting.isEmpty do
+      scala.util.Try(r.session.live.manifest()).toEither match
+        case Left(e) =>
+          status.setText(s"Could not export data: the session did not answer: ${e.getMessage}")
+        case Right(manifest) =>
+          if manifest.steps.getOrElse(0L) < 1L then
+            status.setText("Nothing has run yet: start the session first")
+          else
+            val owner = Option(root.getScene).map(_.getWindow).orNull
+            val form = new DatasetForm(
+              r.session.model,
+              manifest,
+              registry,
+              lastRate,
+              LabDatasets.suggest(manifest.steps.getOrElse(0L))
+            )
+            for options <- DatasetDialog.ask(owner, form) do
+              val c = new FileChooser()
+              c.getExtensionFilters.add(new FileChooser.ExtensionFilter("NetCDF file", "*.nc"))
+              c.setInitialFileName(s"${r.session.model.id}.nc")
+              Option(c.showSaveDialog(owner)).foreach(f => exportData(f.toPath, options))
+
+  private def datasetText(path: Path, result: Either[String, DatasetReport]): String =
+    result match
+      case Right(report) => report.summary(path)
+      case Left(Frames.Cancelled) => "Export cancelled"
+      case Left(e) => s"Could not export the data: $e"
+
+  /**
+   * Replays the session as it is now and saves it as a NetCDF dataset at `path` (see
+   * [[LabDatasets]]) on a background thread, like [[saveAnimation]]: the progress bar and the
+   * status line follow it, Cancel stops it and the returned future completes on the FX thread.
+   * Call it on the FX thread; one file at a time.
+   */
+  def exportData(
+      path: Path,
+      options: DatasetOptions,
+      afterRecord: (Int, Int) => Unit = (_, _) => ()
+  ): CompletableFuture[Either[String, DatasetReport]] =
+    val done = new CompletableFuture[Either[String, DatasetReport]]()
+    def refuse(why: String): CompletableFuture[Either[String, DatasetReport]] =
+      status.setText(s"Could not export the data: $why")
+      if !done.complete(Left(why)) then ()
+      done
+    running match
+      case None => refuse("no session is running")
+      case Some(_) if exporting.isDefined => refuse("a file is being written already")
+      case Some(r) =>
+        scala.util.Try(r.session.live.manifest()).toEither match
+          case Left(e) => refuse(s"the session did not answer: ${e.getMessage}")
+          case Right(manifest) =>
+            val cancel = new AtomicBoolean(false)
+            exporting = Some(cancel)
+            refreshAnimationItem()
+            animationProgress.setProgress(0.0)
+            animationBox.setVisible(true)
+            animationBox.setManaged(true)
+            status.setText(s"Exporting ${path.getFileName}…")
+            def show(records: Int, total: Int): Unit =
+              animationProgress.setProgress(records.toDouble / math.max(1, total))
+              status.setText(s"Exporting ${path.getFileName}: $records of $total records")
+            def finish(result: Either[String, DatasetReport]): Unit =
+              exporting = None
+              animationBox.setVisible(false)
+              animationBox.setManaged(false)
+              refreshAnimationItem()
+              status.setText(datasetText(path, result))
+              if !done.complete(result) then ()
+            def work(): Unit =
+              val result =
+                try
+                  LabDatasets.save(
+                    r.session.model,
+                    manifest,
+                    registry,
+                    path,
+                    options,
+                    (records, total) =>
+                      Platform.runLater(() => show(records, total))
+                      afterRecord(records, total)
+                    ,
+                    () => cancel.get
+                  )
+                catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
+              Platform.runLater(() => finish(result))
+            val thread = new Thread(() => work(), "physis-dataset")
+            thread.setDaemon(true)
+            worker = Some(thread)
+            thread.start()
+            done
 
   @volatile private var worker: Option[Thread] = None
 
