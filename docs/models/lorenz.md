@@ -30,6 +30,10 @@ Initial state: (1, 1, 1), perturbed by `epsilon` using the run seed.
 The system has no conserved quantity, so accuracy is checked against a reference solution and
 chaos against its known Lyapunov exponent.
 
+## Datasets
+
+`physis-cli export` writes the probes of the run, with the time and a digest per record, as a NetCDF file; the model has no fields. See [datasets.md](../datasets.md).
+
 ## Verification
 
 | Check | Threshold | Where |

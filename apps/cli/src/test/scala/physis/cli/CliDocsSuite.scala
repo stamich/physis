@@ -27,13 +27,13 @@ class CliDocsSuite extends munit.FunSuite:
     blocks.result().map(_.split("\\s+").toList.drop(1))
 
   private val fileOptions =
-    Set("--out", "--jsonl", "--manifests", "--manifest", "--frames", "--animate")
+    Set("--out", "--jsonl", "--manifests", "--manifest", "--frames", "--animate", "--export")
 
   /** The same arguments with every file or directory moved into `dir`. */
   private def inside(dir: Path, args: List[String]): List[String] =
     def moved(name: String): String = dir.resolve(name).toString
     val main = args match
-      case ("frames" | "animate" | "montage" | "replay") :: first :: rest =>
+      case ("frames" | "animate" | "montage" | "replay" | "export" | "verify") :: first :: rest =>
         args.head :: moved(first) :: rest
       case _ => args
     def go(rest: List[String]): List[String] = rest match

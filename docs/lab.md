@@ -86,6 +86,21 @@ and removes the file. Closing the window cancels it too. A fluid replay is slow 
 second at 256 × 256; a convection layer of 96 × 48 does about 450; the shallow-water sea is the cheapest of the fields), so look at the estimate first. Problems (nothing has run yet, a path that
 cannot be written) appear in the status line.
 
+## Exporting data
+
+**File → Export data…** writes the session so far as a NetCDF file (see
+[datasets.md](datasets.md)): the fields of the model (all the field models; Lorenz, the pendulum
+and Boids give their probes alone), the probes, the time and a digest of the state at every
+*n*-th step. The dialog asks for *n*, for the precision of the fields (32-bit floats halve the
+file) and for the manifest next to the file, and a line under the fields gives the number of
+records, the size of the file and about how long it will take. More than 1 GB is refused, and the
+line says which *n* would fit.
+
+Like an animation the file is made by replaying the session from its manifest in the background,
+so it holds the data `physis-cli replay <manifest> --export` writes, and `physis-cli verify`
+accepts it. The status line and the progress bar show the records written; **Cancel** stops it
+and removes the file.
+
 ## Painting
 
 Gray–Scott, Boids, Waves, Physarum, Fluids, Convection and Shallow water have a **tool box** under the parameters. At first no tool is on and

@@ -1,7 +1,7 @@
 # Sweeps
 
 A sweep runs a model once for every point of a grid of parameters and reports one row per point.
-It lives in `physis.core.sweep` and is used by `physis-cli sweep` and `physis-cli montage` (see [cli.md](cli.md)).
+It lives in `physis.core.sweep` and is used by `physis-cli sweep` and `physis-cli montage` (see [cli.md](cli.md)). `--export <dir>` also writes a NetCDF dataset per point, `point-0000.nc` and so on, each the replay of the manifest of its point (see [datasets.md](datasets.md)).
 
 ## Grid
 

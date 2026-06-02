@@ -60,6 +60,10 @@ The fields `food` and `trail` accept `Brush` strokes (assign, add, erase; clampe
 tools are **Paint food**, **Erase food** and **Paint trail**. Agents climb a painted food field
 towards it and form a network between food sources.
 
+## Datasets
+
+`physis-cli export` and File → Export data… write the run as a NetCDF file with the fields `trail` and `food`, the probes, the time and a digest per record; see [datasets.md](../datasets.md).
+
 ## Checks
 
 `tools/physarum_reference.py` is an independent numpy version of the same rules with its own

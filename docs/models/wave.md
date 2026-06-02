@@ -63,6 +63,10 @@ same result on every platform. A wall on the source cell silences it.
 A preset is a set of parameters plus ordinary interventions applied at step 0, so it appears in
 the manifest like anything painted by hand. Applying one starts a new run.
 
+## Datasets
+
+`physis-cli export` and File → Export data… write the run as a NetCDF file with the fields `u` and `wall`, the probes, the time and a digest per record; see [datasets.md](../datasets.md).
+
 ## Verification
 
 | Check | Threshold | Where |

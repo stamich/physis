@@ -131,6 +131,10 @@ The preset tests compare the Rossby wave's phase at 2000 and 4000 steps (0.987 a
 dispersion relation, tolerance 10 %) and the Kelvin wave's southward peak (0.045 at step 271)
 with the numpy output.
 
+## Datasets
+
+- A run can be written as a NetCDF file with `height`, `speed`, `vorticity`, `depth` and `land` (`physis-cli export`, File → Export data…), in metres and seconds with `y` running south; see [datasets.md](../datasets.md).
+
 ## Limits
 
 - The reference is linear: the nonlinear mode is tested for conservation, the steepening and
