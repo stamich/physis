@@ -28,6 +28,11 @@ import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Stagger
  * @param amp     the size of the start, in m: the height of the front
  * @param nx      grid columns (needs a restart)
  * @param ny      grid rows (needs a restart)
+ * @param flooding 0 for a coast that is a wall, 1 for a coast that floods and dries: water can
+ *                run up over land and leave it again (needs a restart, and `nonlinear = 1`)
+ * @param dryDepth the depth of water, in m, under which a face carries no flow: water thinner
+ *                than this over a sill stays where it is
+ * @param slope   how steep the beach of seabed 3 and 4 is, in m of rise per m (needs a restart)
  */
 final case class ShallowParams(
     gravity: Double,
@@ -43,7 +48,10 @@ final case class ShallowParams(
     start: Int,
     amp: Double,
     nx: Int,
-    ny: Int
+    ny: Int,
+    flooding: Int = 0,
+    dryDepth: Double = 0.01,
+    slope: Double = 0.05
 )
 
 object ShallowParams:
@@ -67,7 +75,7 @@ object ShallowParams:
     ParamSpec(
       "dx",
       default = 20_000.0,
-      min = 500.0,
+      min = 0.01,
       max = 100_000.0,
       unit = "m",
       doc = "Size of a cell",
@@ -149,7 +157,32 @@ object ShallowParams:
       restart = true
     ),
     ParamSpec("nx", default = 128, min = 16, max = 512, doc = "Grid columns", restart = true),
-    ParamSpec("ny", default = 96, min = 16, max = 512, doc = "Grid rows", restart = true)
+    ParamSpec("ny", default = 96, min = 16, max = 512, doc = "Grid rows", restart = true),
+    ParamSpec(
+      "flooding",
+      default = 0,
+      min = 0,
+      max = 1,
+      doc = "0 a coast is a wall, 1 water floods and dries the land (needs nonlinear = 1)",
+      restart = true
+    ),
+    ParamSpec(
+      "dryDepth",
+      default = 0.01,
+      min = 1e-6,
+      max = 10.0,
+      unit = "m",
+      doc = "Water thinner than this over a sill does not flow (flooding only)"
+    ),
+    ParamSpec(
+      "slope",
+      default = 0.05,
+      min = 0.001,
+      max = 1.0,
+      unit = "m/m",
+      doc = "Slope of the beach of the sea floors 3 and 4: rise per distance",
+      restart = true
+    )
   )
 
 /**
@@ -223,6 +256,18 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   private val divergence = new Field2D(mac.cells)
   private val scratchC = new Field2D(mac.cells)
 
+  // Wetting and drying (flooding = 1). A dry cell keeps its surface at its bed, so a lake at rest
+  // has nothing to push the water; see [[Staggered]].
+  private var flooding = false
+  private var dryNow = 0.0
+  private val bed = new Field2D(mac.cells)
+  private val waterC = new Field2D(mac.cells)
+  private val sillU = new Field2D(mac.uFaces)
+  private val sillV = new Field2D(mac.vFaces)
+  private val wetU = new Field2D(mac.uFaces)
+  private val wetV = new Field2D(mac.vFaces)
+  private val scaleC = new Field2D(mac.cells)
+
   // What an absorbing strip keeps of a value in one step, at the cells and at the two kinds of
   // faces; null while there is no strip.
   private var keepC: Field2D = null
@@ -256,9 +301,13 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         i += 1
       j += 1
 
-  /** Land holds no water. */
+  /**
+   * Land holds no water. With flooding the surface of every cell is also put at or above its
+   * bed (water cannot be dug out of the floor), and the surface of land at rest.
+   */
   def clearLand(): Unit =
-    if land.count > 0 then
+    if flooding then settle()
+    else if land.count > 0 then
       var j = 0
       while j < ny do
         var i = 0
@@ -282,14 +331,46 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   /** The depth of the water in cell `(i, j)`, see [[refreshTotal]]. */
   private def thickness(i: Int, j: Int): Double =
-    val rest = depthNow * shape(i, j)
-    if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
+    if flooding then math.max(0.0, eta(i, j) - bed(i, j))
+    else
+      val rest = depthNow * shape(i, j)
+      if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
 
   /** Takes the parameters that the measurements and the next step need. */
   def configure(p: ShallowParams): Unit =
     nonlinear = p.nonlinear != 0
     depthNow = p.depth
     gravityNow = p.gravity
+    flooding = p.flooding != 0
+    dryNow = p.dryDepth
+    if flooding then refreshBed()
+
+  /** The bed, in m above the level of the sea at rest: minus the depth at rest. */
+  private def refreshBed(): Unit =
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        bed(i, j) = -depthNow * shape(i, j)
+        i += 1
+      j += 1
+
+  /**
+   * With flooding: puts the surface of every cell at or above its bed and the surface of land
+   * at the level of rest, `max(0, bed)`. Call after the sea floor, the land or the surface was
+   * set from outside. Without flooding it does nothing.
+   */
+  def settle(): Unit =
+    if flooding then
+      refreshBed()
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) =
+            if land(i, j) then math.max(0.0, bed(i, j)) else math.max(eta(i, j), bed(i, j))
+          i += 1
+        j += 1
 
   /**
    * Makes the outer `width` cells absorb waves: every step they keep a smaller part of the
@@ -338,7 +419,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       while j < ny do
         var i = 0
         while i < nx do
-          eta(i, j) *= keepC(i, j)
+          if flooding then
+            val rest = math.max(0.0, bed(i, j))
+            eta(i, j) = rest + (eta(i, j) - rest) * keepC(i, j)
+          else eta(i, j) *= keepC(i, j)
           i += 1
         i = 0
         while i <= nx do
@@ -383,6 +467,63 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         i += 1
       j += 1
 
+  /**
+   * The height equation with wetting and drying: the same `η -= dt ∇·(h u)`, with the depth over
+   * the sill of each face (see [[Staggered.sillDepthU]]), no flux through a face that is dry, and
+   * the outflow of every cell cut to the water it holds. The volume stays exact, no cell gets
+   * less than 0 of water, and the surface of a dry cell stays at its bed.
+   */
+  private def floodContinuity(dt: Double): Unit =
+    val u = this.u
+    val v = this.v
+    Staggered.waterDepth(eta, bed, waterC)
+    Staggered.sillDepthU(eta, bed, dryNow, wrapX, sillU, wetU)
+    Staggered.sillDepthV(eta, bed, dryNow, sillV, wetV)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i <= nx do
+        fluxU(i, j) = openU(i, j) * wetU(i, j) * sillU(i, j) * u(i, j)
+        i += 1
+      j += 1
+    j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        fluxV(i, j) = openV(i, j) * wetV(i, j) * sillV(i, j) * v(i, j)
+        i += 1
+      j += 1
+    Staggered.limitOutflow(fluxU, fluxV, waterC, dt, mac.h, wrapX, scaleC)
+    Mac.divergence(fluxU, fluxV, divergence)
+    j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        eta(i, j) = math.max(bed(i, j), eta(i, j) - dt * divergence(i, j))
+        i += 1
+      j += 1
+
+  /** Stops the flow through the faces that carry no water, from the surface as it is now. */
+  private def stopDryFaces(): Unit =
+    val u = this.u
+    val v = this.v
+    Staggered.sillDepthU(eta, bed, dryNow, wrapX, sillU, wetU)
+    Staggered.sillDepthV(eta, bed, dryNow, sillV, wetV)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i <= nx do
+        if wetU(i, j) == 0.0 then u(i, j) = 0.0
+        i += 1
+      j += 1
+    j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        if wetV(i, j) == 0.0 then v(i, j) = 0.0
+        i += 1
+      j += 1
+
   /** The flow carries itself along: `u` and `v` advected by the flow, semi-Lagrangian. */
   private def advectVelocity(dt: Double): Unit =
     val from = cur
@@ -421,11 +562,12 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           v(i, j) += dt * (-g * (eta(i, j) - eta(i, j - 1)) * inv + f * uAtV(i, j) - r * v(i, j))
         i += 1
       j += 1
+    if flooding then stopDryFaces()
 
   /** One step of size `dt`. */
   def step(p: ShallowParams, dt: Double): Unit =
     configure(p)
-    continuity(dt)
+    if flooding then floodContinuity(dt) else continuity(dt)
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
     absorb()
@@ -495,7 +637,18 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       j += 1
 
   /** The volume of water above rest, `∫ η`, in m³. */
-  def volume: Double = eta.sum * mac.h * mac.h
+  def volume: Double =
+    if flooding then
+      var sum = 0.0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          sum += eta(i, j) - math.max(0.0, bed(i, j))
+          i += 1
+        j += 1
+      sum * mac.h * mac.h
+    else eta.sum * mac.h * mac.h
 
   /**
    * The energy per unit of density, `½ ∫ (g η² + h |u|²)`, in m⁵/s²: the potential energy of the
@@ -512,7 +665,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       var i = 0
       while i < nx do
         val e = eta(i, j)
-        potential += e * e
+        if flooding then
+          val rest = math.max(0.0, bed(i, j))
+          potential += e * e - rest * rest
+        else potential += e * e
         if openU(i, j) != 0.0 then
           val west = if i > 0 then thickness(i - 1, j) else thickness(nx - 1, j)
           kinetic += 0.5 * (west + thickness(i, j)) * u(i, j) * u(i, j)
@@ -699,7 +855,11 @@ object Shallow extends Model[ShallowParams]:
     stepping match
       case Stepping.Fixed(dt) =>
         val c = courant(p, dt)
-        if c > MaxCourant then
+        if p.flooding != 0 && p.nonlinear == 0 then
+          Left(
+            "flooding needs the nonlinear equations (nonlinear = 1): a linear sea has no depth to dry out"
+          )
+        else if c > MaxCourant then
           Left(
             f"the waves cross $c%.2f cells per step; the step needs at most $MaxCourant%.1f " +
               f"(lower the depth or gravity, make the cells larger, or use dt <= ${MaxCourant * p.dx / waveSpeed(p)}%.0f s)"
@@ -728,6 +888,7 @@ object Shallow extends Model[ShallowParams]:
       case 1 => state.front(p.amp)
       case 2 => state.rossby(p)
       case _ => ()
+    state.settle()
     state
 
   def advance(state: ShallowState, p: ShallowParams, dt: Double, ctx: StepContext): Unit =

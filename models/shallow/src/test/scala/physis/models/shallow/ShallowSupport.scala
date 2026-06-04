@@ -25,7 +25,10 @@ object ShallowSupport:
       start: Int = 0,
       amp: Double = 0.0,
       nx: Int = 40,
-      ny: Int = 30
+      ny: Int = 30,
+      flooding: Int = 0,
+      dryDepth: Double = 0.01,
+      slope: Double = 0.05
   ): ShallowParams = ShallowParams(
     gravity = gravity,
     depth = depth,
@@ -40,7 +43,10 @@ object ShallowSupport:
     start = start,
     amp = amp,
     nx = nx,
-    ny = ny
+    ny = ny,
+    flooding = flooding,
+    dryDepth = dryDepth,
+    slope = slope
   )
 
   /**
