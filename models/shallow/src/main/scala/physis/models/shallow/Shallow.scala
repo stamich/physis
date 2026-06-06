@@ -23,8 +23,10 @@ import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Stagger
  *                above and below; 1 a closed basin; 2 an open sea whose borders absorb waves
  * @param sponge  width in cells of the absorbing strip along the borders of an open sea
  * @param seabed  the shape of the sea floor (needs a restart): 0 flat, 1 a shelf that rises
- *                toward the right, 2 a seamount in the middle
- * @param start   how the run begins (needs a restart): 0 at rest, 1 a front, 2 a Rossby wave
+ *                toward the right, 2 a seamount in the middle, 3 a plane beach that comes out of
+ *                the water, 4 the beach with a bay (3 and 4 need flooding)
+ * @param start   how the run begins (needs a restart): 0 at rest, 1 a front, 2 a Rossby wave,
+ *                3 a solitary wave going right, 4 an N-wave (a dip ahead of a hump) going right
  * @param amp     the size of the start, in m: the height of the front
  * @param nx      grid columns (needs a restart)
  * @param ny      grid rows (needs a restart)
@@ -135,16 +137,18 @@ object ShallowParams:
       "seabed",
       default = 0,
       min = 0,
-      max = 2,
-      doc = "Sea floor: 0 flat, 1 a shelf that rises toward the right, 2 a seamount",
+      max = 4,
+      doc =
+        "Sea floor: 0 flat, 1 a shelf, 2 a seamount, 3 a plane beach, 4 a beach with a bay (3 and 4 need flooding)",
       restart = true
     ),
     ParamSpec(
       "start",
       default = 0,
       min = 0,
-      max = 2,
-      doc = "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave",
+      max = 4,
+      doc =
+        "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave",
       restart = true
     ),
     ParamSpec(
@@ -699,12 +703,19 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
    * width, then rises linearly to a twentieth of the depth at 90% and stays there; 2 is a
    * Gaussian seamount in the middle that takes away 80% of the depth at its top.
    */
-  def seabed(kind: Int): Unit =
+  def seabed(kind: Int, slope: Double = Shallow.DefaultSlope): Unit =
     var j = 0
     while j < ny do
       var i = 0
       while i < nx do
         shape(i, j) = kind match
+          case 3 => beachShape(i + 0.5, slope)
+          case 4 =>
+            val dy = j + 0.5 - 0.5 * ny
+            val sigma = Shallow.BayWidth * ny
+            val ramp = math.min(1.0, math.max(0.0, (i + 0.5 - Shallow.BeachToe * nx) / (0.1 * nx)))
+            beachShape(i + 0.5, slope) +
+              Shallow.BayDepth * math.exp(-dy * dy / (2.0 * sigma * sigma)) * ramp
           case 1 =>
             val x = (i + 0.5) / nx
             if x <= 0.55 then 1.0
@@ -718,6 +729,73 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           case _ => 1.0
         i += 1
       j += 1
+
+  /**
+   * The depth at rest, as a fraction of the depth, of a plane beach at `x` cells from the left:
+   * 1 up to [[Shallow.BeachToe]] of the width, then the floor rises by `slope` m per m, which
+   * takes the fraction below 0 where the floor comes out of the water.
+   */
+  private def beachShape(x: Double, slope: Double): Double =
+    val toe = Shallow.BeachToe * nx
+    if x <= toe then 1.0 else 1.0 - slope * (x - toe) * mac.h / depthNow
+
+  /** `sech²` of `x`, without overflow. */
+  private def sech2(x: Double): Double =
+    val c = math.cosh(x)
+    if c.isInfinite then 0.0 else 1.0 / (c * c)
+
+  /**
+   * A solitary wave of height `amp` going right, standing at [[Shallow.WaveStart]] of the width:
+   * `η = amp sech²((x - x0) / w)` with the speed of the water `u = c η / (h + η)`, `c = √(g (h + amp))`,
+   * which is the solitary wave of the nonlinear equations when `w = √(4 h³ / 3 amp)` is wider than
+   * a few cells ([[Shallow.waveWidth]] widens it to five cells otherwise).
+   */
+  def solitary(p: ShallowParams): Unit =
+    if p.amp > 0.0 then
+      val u = this.u
+      val w = Shallow.waveWidth(p)
+      val x0 = Shallow.WaveStart * nx * p.dx
+      val c = math.sqrt(p.gravity * (p.depth + p.amp))
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) = p.amp * sech2(((i + 0.5) * p.dx - x0) / w)
+          i += 1
+        i = 0
+        while i <= nx do
+          val e = p.amp * sech2((i * p.dx - x0) / w)
+          u(i, j) = c * e / (p.depth + e)
+          i += 1
+        j += 1
+      closeFaces()
+
+  /**
+   * An N-wave of height `amp` going right: a hump of `amp` with a dip of `amp` three widths ahead
+   * of it, `η = amp (sech²((x - x0) / w) - sech²((x - x0 - 3 w) / w))`, with the speed of the water of a
+   * linear wave, `u = η √(g / h)`. It floods nothing at first and brings the sea back from the
+   * shore before the crest, as a tsunami can.
+   */
+  def nWave(p: ShallowParams): Unit =
+    if p.amp > 0.0 then
+      val u = this.u
+      val w = Shallow.waveWidth(p)
+      val x0 = Shallow.WaveStart * nx * p.dx
+      val k = math.sqrt(p.gravity / p.depth)
+      def height(x: Double): Double =
+        p.amp * (sech2((x - x0) / w) - sech2((x - x0 - 3.0 * w) / w))
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) = height((i + 0.5) * p.dx)
+          i += 1
+        i = 0
+        while i <= nx do
+          u(i, j) = k * height(i * p.dx)
+          i += 1
+        j += 1
+      closeFaces()
 
   /**
    * A step in the height across the middle of the domain: `amp` in the northern half (the top
@@ -831,6 +909,28 @@ object Shallow extends Model[ShallowParams]:
   /** The depth over the top of the shelf of seabed 1, as a fraction of the depth. */
   val ShelfDepth: Double = 0.05
 
+  /** The slope of the beach of the sea floors 3 and 4 when none is given, in m per m. */
+  val DefaultSlope: Double = 0.05
+
+  /** Where the beach starts to rise, as a fraction of the width. */
+  val BeachToe: Double = 0.5
+
+  /** Where the wave of the starts 3 and 4 stands, as a fraction of the width. */
+  val WaveStart: Double = 0.25
+
+  /** How much deeper the bay of the sea floor 4 is than the beach, as a fraction of the depth. */
+  val BayDepth: Double = 0.3
+
+  /** The width of the bay of the sea floor 4, as a fraction of the number of rows. */
+  val BayWidth: Double = 0.1
+
+  /**
+   * The width `w` of the waves of the starts 3 and 4, in m: that of a solitary wave of height
+   * `amp`, `√(4 h³ / (3 amp))`, but never under five cells, which the grid could not carry.
+   */
+  def waveWidth(p: ShallowParams): Double =
+    math.max(math.sqrt(4.0 * p.depth * p.depth * p.depth / (3.0 * p.amp)), 5.0 * p.dx)
+
   /** Width of the smoothed front of [[ShallowState.front]], in cells. */
   val FrontWidth: Double = 3.0
 
@@ -855,7 +955,9 @@ object Shallow extends Model[ShallowParams]:
     stepping match
       case Stepping.Fixed(dt) =>
         val c = courant(p, dt)
-        if p.flooding != 0 && p.nonlinear == 0 then
+        if p.seabed >= 3 && p.flooding == 0 then
+          Left("the sea floors 3 and 4 rise out of the water: they need flooding = 1")
+        else if p.flooding != 0 && p.nonlinear == 0 then
           Left(
             "flooding needs the nonlinear equations (nonlinear = 1): a linear sea has no depth to dry out"
           )
@@ -882,11 +984,13 @@ object Shallow extends Model[ShallowParams]:
   def init(p: ShallowParams, rng: SplittableRng): ShallowState =
     val state = new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
     state.configure(p)
-    state.seabed(p.seabed)
+    state.seabed(p.seabed, p.slope)
     if p.edges == OpenSea then state.sponge(p.sponge)
     p.start match
       case 1 => state.front(p.amp)
       case 2 => state.rossby(p)
+      case 3 => state.solitary(p)
+      case 4 => state.nWave(p)
       case _ => ()
     state.settle()
     state
