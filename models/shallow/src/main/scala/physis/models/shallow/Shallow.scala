@@ -271,6 +271,8 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   private val wetU = new Field2D(mac.uFaces)
   private val wetV = new Field2D(mac.vFaces)
   private val scaleC = new Field2D(mac.cells)
+  private var maxRunupNow = 0.0
+  private var maxInundationNow = 0.0
 
   // What an absorbing strip keeps of a value in one step, at the cells and at the two kinds of
   // faces; null while there is no strip.
@@ -575,6 +577,79 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
     absorb()
+    if flooding then trackFlood()
+
+  /** Keeps the highest run-up and the deepest water over the shore that the run has seen. */
+  private def trackFlood(): Unit =
+    maxRunupNow = math.max(maxRunupNow, runup)
+    maxInundationNow = math.max(maxInundationNow, inundation)
+
+  /** Whether the cell is a sea or shore cell with water over its bed (more than `dryDepth`). */
+  private def isWet(i: Int, j: Int): Boolean =
+    !land(i, j) && eta(i, j) - bed(i, j) > dryNow
+
+  /** The share of the cells that are not land and hold water; 0 without flooding. */
+  def wetFraction: Double =
+    if !flooding then 0.0
+    else
+      var wet = 0
+      var open = 0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if !land(i, j) then
+            open += 1
+            if isWet(i, j) then wet += 1
+          i += 1
+        j += 1
+      if open == 0 then 0.0 else wet.toDouble / open
+
+  /** The area of the shore (the floor above the sea at rest) that is under water, in m². */
+  def floodedArea: Double =
+    if !flooding then 0.0
+    else
+      var n = 0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then n += 1
+          i += 1
+        j += 1
+      n * mac.h * mac.h
+
+  /** The highest surface over the shore now, in m above the sea at rest; 0 if the shore is dry. */
+  def runup: Double =
+    var best = 0.0
+    if flooding then
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then best = math.max(best, eta(i, j))
+          i += 1
+        j += 1
+    best
+
+  /** The deepest water over the shore now, in m. */
+  def inundation: Double =
+    var best = 0.0
+    if flooding then
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then best = math.max(best, eta(i, j) - bed(i, j))
+          i += 1
+        j += 1
+    best
+
+  /** The highest run-up of the run so far, in m. */
+  def maxRunup: Double = maxRunupNow
+
+  /** The deepest water over the shore that the run has seen, in m. */
+  def maxInundation: Double = maxInundationNow
 
   /** Paints land or height, see [[Shallow.intervene]]. */
   def applyBrush(target: String, disc: Disc, op: Op, value: Double): Unit =
@@ -603,6 +678,37 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       var i = 0
       while i < nx do
         out(k) = depthNow * shape(i, j)
+        k += 1
+        i += 1
+      j += 1
+
+  /**
+   * Writes the depth of the water, row by row, from `offset`: with flooding the height of the
+   * surface over the bed (0 where it is dry), without it the depth at rest plus the height.
+   */
+  def waterInto(out: Array[Double], offset: Int): Unit =
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        out(k) =
+          if land(i, j) then 0.0
+          else if flooding then math.max(0.0, eta(i, j) - bed(i, j))
+          else math.max(0.0, depthNow * shape(i, j) + eta(i, j))
+        k += 1
+        i += 1
+      j += 1
+
+  /** Writes 1 for land and for a dry cell of the shore, 0 for a cell with water. */
+  def dryInto(out: Array[Double], offset: Int): Unit =
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val dry = land(i, j) || (flooding && !isWet(i, j))
+        out(k) = if dry then 1.0 else 0.0
         k += 1
         i += 1
       j += 1
@@ -849,9 +955,12 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     closeFaces()
 
 object ShallowState:
-  /** Live runs export the height, the speed, the vorticity, the depth and the land. */
+  /**
+   * Live runs export the height, the speed, the vorticity, the depth, the land, the depth of the
+   * water and where it is dry.
+   */
   given stateExport: StateExport[ShallowState] with
-    def size(state: ShallowState): Int = 5 * state.mac.cells.cells
+    def size(state: ShallowState): Int = 7 * state.mac.cells.cells
 
     def copyInto(state: ShallowState, out: Array[Double]): Unit =
       val n = state.mac.cells.cells
@@ -860,6 +969,8 @@ object ShallowState:
       state.vorticityInto(out, 2 * n)
       state.depthInto(out, 3 * n)
       state.land.field.copyInteriorInto(out, 4 * n)
+      state.waterInto(out, 5 * n)
+      state.dryInto(out, 6 * n)
 
     override def layout(state: ShallowState): IndexedSeq[Slice] =
       val g = state.mac.cells
@@ -869,7 +980,9 @@ object ShallowState:
         Slice("speed", n, g.nx, g.ny),
         Slice("vorticity", 2 * n, g.nx, g.ny),
         Slice("depth", 3 * n, g.nx, g.ny),
-        Slice("land", 4 * n, g.nx, g.ny)
+        Slice("land", 4 * n, g.nx, g.ny),
+        Slice("water", 5 * n, g.nx, g.ny),
+        Slice("dry", 6 * n, g.nx, g.ny)
       )
 
 object Shallow extends Model[ShallowParams]:
@@ -1051,5 +1164,35 @@ object Shallow extends Model[ShallowParams]:
   val maxSpeed: Probe[ShallowState] =
     Probe[ShallowState]("max_speed", "m/s")((s, _) => s.maxSpeed)
 
+  /** The share of the sea and shore cells that hold water; 0 without flooding. */
+  val wetFraction: Probe[ShallowState] =
+    Probe[ShallowState]("wet_fraction", "1")((s, _) => s.wetFraction)
+
+  /** The area of the shore under water, in m²; 0 without flooding. */
+  val floodedArea: Probe[ShallowState] =
+    Probe[ShallowState]("flooded_area", "m²")((s, _) => s.floodedArea)
+
+  /** The highest surface over the shore now, in m above the sea at rest; 0 if it is dry. */
+  val runup: Probe[ShallowState] = Probe[ShallowState]("runup", "m")((s, _) => s.runup)
+
+  /** The highest run-up of the run so far, in m. */
+  val maxRunup: Probe[ShallowState] =
+    Probe[ShallowState]("max_runup", "m")((s, _) => s.maxRunup)
+
+  /** The deepest water over the shore that the run has seen, in m. */
+  val maxInundation: Probe[ShallowState] =
+    Probe[ShallowState]("max_inundation", "m")((s, _) => s.maxInundation)
+
   val probes: Vector[Probe[ShallowState]] =
-    Vector(mass, energy, maxHeight, minHeight, maxSpeed)
+    Vector(
+      mass,
+      energy,
+      maxHeight,
+      minHeight,
+      maxSpeed,
+      wetFraction,
+      floodedArea,
+      runup,
+      maxRunup,
+      maxInundation
+    )

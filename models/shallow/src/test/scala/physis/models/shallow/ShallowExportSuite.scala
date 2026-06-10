@@ -8,7 +8,10 @@ class ShallowExportSuite extends munit.FunSuite:
 
   test("every exported field is a slice of the state, once, with a unit and a description") {
     val slices = ShallowState.stateExport.layout(run.state).map(_.name)
-    assertEquals(spec.fields.map(_.slice), Vector("height", "speed", "vorticity", "depth", "land"))
+    assertEquals(
+      spec.fields.map(_.slice),
+      Vector("height", "speed", "vorticity", "depth", "land", "water", "dry")
+    )
     spec.fields.foreach { f =>
       assert(slices.contains(f.slice), s"no slice ${f.slice} in $slices")
       assert(f.units.nonEmpty && f.longName.nonEmpty, f.name)

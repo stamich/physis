@@ -29,6 +29,21 @@ object ShallowViews:
   /** The depth of the water at rest. */
   val depth: View.Heatmap = heatmap("depth", ValueRange.Auto, Colormap.Viridis, "depth (m)")
 
+  /**
+   * The depth of the water now. Where the shore is dry the cell is drawn in the grey of the
+   * land, so the edge of the grey is the shoreline.
+   */
+  val water: View.Heatmap =
+    View.Heatmap(
+      "water",
+      ValueRange.Auto,
+      Colormap.Viridis,
+      "water depth (m)",
+      overlay = Some("dry")
+    ) match
+      case h: View.Heatmap => h
+      case other => throw new IllegalStateException(s"not a heatmap: $other")
+
   /** Channels of the probes in [[Shallow.probes]] order. */
   val energy: Channel = Channel.ProbeAt(1, "energy")
   val highest: Channel = Channel.ProbeAt(2, "highest surface")
@@ -48,6 +63,9 @@ object ShallowViews:
 
   /** What the Lab shows. */
   val lab: View = default
+
+  /** The depth of the water above, the plots below: for a coast that floods. */
+  val flooding: View = View.Layout(Seq(water, plots), Direction.Vertical)
 
   /** The speed above, the plots below. */
   val flow: View = View.Layout(Seq(speed, plots), Direction.Vertical)
