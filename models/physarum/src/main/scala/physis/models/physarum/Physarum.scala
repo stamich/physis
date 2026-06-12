@@ -305,6 +305,7 @@ object Physarum extends Model[PhysarumParams]:
       Left(s"physarum has no field '$target' to pulse (use 'food' or 'trail')")
     case _: Intervention.Disturb =>
       Left("physarum agents are not disturbed; paint 'food' or 'trail' instead")
+    case _: Intervention.Load => Left("physarum reads no files")
 
   /**
    * Brush paints food or trail (set, add or erase; results are kept at or above zero) and Pulse

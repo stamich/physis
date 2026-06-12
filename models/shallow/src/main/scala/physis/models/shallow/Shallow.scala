@@ -4,7 +4,7 @@ import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
-import physis.core.run.{Disc, Intervention, Op}
+import physis.core.run.{Disc, Intervention, Op, Raster, Rasters}
 import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Staggered}
 
 /**
@@ -661,6 +661,23 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         val _ = Brush(eta, disc, wrapX, false, op, value)
         clearLand()
 
+  /**
+   * Sets the sea floor from `raster`, the height of the ground in m above the level of the sea
+   * (negative under the sea), stretched over the whole grid with the north at the top. The
+   * surface is put back above the floor, so a basin stays at rest.
+   */
+  def loadSeafloor(raster: Raster, p: ShallowParams): Unit =
+    configure(p)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val z = raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
+        shape(i, j) = -z / p.depth
+        i += 1
+      j += 1
+    settle()
+
   /** Adds a Gaussian of height (`amplitude` negative lowers) centred at `(x, y)` in cells. */
   def applyPulse(x: Double, y: Double, sigma: Double, amplitude: Double): Unit =
     val _ = Pulse.stamp(eta, x, y, sigma, amplitude, wrapX, false)
@@ -1126,6 +1143,11 @@ object Shallow extends Model[ShallowParams]:
     case Intervention.Pulse(target, _, _, _, _) =>
       Left(s"shallow water has no field '$target' to pulse (use 'height')")
     case _: Intervention.Disturb => Left("shallow water has no agents to disturb")
+    case Intervention.Load("seafloor", _, digest) =>
+      if Rasters.get(digest).isDefined then Right(())
+      else Left(f"the sea floor with digest $digest%016x has not been read")
+    case Intervention.Load(target, _, _) =>
+      Left(s"shallow water has no field '$target' to load (use 'seafloor')")
 
   /**
    * `Brush("land")` paints land (the water in those cells is lost with them) or, with `Erase`,
@@ -1137,13 +1159,20 @@ object Shallow extends Model[ShallowParams]:
       p: ShallowParams,
       iv: Intervention
   ): Either[String, Unit] =
-    accepts(iv).map { _ =>
+    accepts(iv).flatMap { _ =>
       iv match
         case Intervention.Brush(target, disc, op, value) =>
           state.applyBrush(target, disc, op, value)
+          Right(())
         case Intervention.Pulse(_, x, y, sigma, amplitude) =>
           state.applyPulse(x, y, sigma, amplitude)
-        case _ => ()
+          Right(())
+        case Intervention.Load(_, _, digest) =>
+          if p.flooding == 0 then Left("a sea floor from a file needs flooding = 1")
+          else
+            Rasters.get(digest).foreach(state.loadSeafloor(_, p))
+            Right(())
+        case _ => Right(())
     }
 
   /** The volume of water above rest, in m³: constant unless something is painted or absorbed. */

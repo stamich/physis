@@ -39,7 +39,7 @@ object Cli:
   private val time = Spec(Set("--until", "--steps", "--sample-every", "--dt", "--adaptive"))
   private val image = Spec(Set("--every", "--scale"), Set("--no-color-bar", "--compress"))
 
-  private val strokes = Spec(Set("--stroke", "--manifest"))
+  private val strokes = Spec(Set("--stroke", "--manifest", "--bathymetry"))
   private val movie = Spec(Set("--fps", "--loops"))
   private val data = Spec(Set("--every", "--vars"), Set("--float"))
 
@@ -103,6 +103,8 @@ object Cli:
     """  --stroke <spec>        a stroke at a step, recorded in the manifest (repeatable):
       |                         STEP:brush:TARGET:X:Y:R:OP:VALUE (OP is set, add or erase),
       |                         STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE, STEP:disturb:X:Y:R:STRENGTH
+      |  --bathymetry <file.nc> the sea floor of a shallow run, variable 'elevation' in metres;
+      |                         the manifest keeps the file's name and digest
       |  --manifest <path>      write the manifest of the run, with the strokes, to <path>""".stripMargin
 
   private val Pictures: String =

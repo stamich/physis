@@ -301,6 +301,7 @@ object Wave extends Model[WaveParams]:
     case Intervention.Pulse(target, _, _, _, _) =>
       Left(s"wave has no field '$target' to pulse (use 'u')")
     case _: Intervention.Disturb => Left("wave has no agents to disturb")
+    case _: Intervention.Load => Left("wave reads no files")
 
   override def intervene(state: WaveState, p: WaveParams, iv: Intervention): Either[String, Unit] =
     accepts(iv).map { _ =>
