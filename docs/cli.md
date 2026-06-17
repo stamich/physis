@@ -116,6 +116,10 @@ physis-cli replay smoke.json --animate again.png --every 10
 | `STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE` | a Gaussian bump |
 | `STEP:disturb:X:Y:R:STRENGTH` | turns the agents in a disc (boids) |
 
+`--bathymetry <file.nc>` (same commands) sets the sea floor of a shallow run with `flooding=1` from
+the variable `elevation` of a NetCDF file; the manifest keeps the file name and a digest, and a
+replay refuses a changed file ([flooding.md](flooding.md)).
+
 A stroke is checked against the model before anything runs (`describe` and the model's page
 list its targets); a wrong one is a usage error, exit code 2. `--manifest <path>` records the
 run with its strokes, also for `frames`, `animate` and `replay`, so that the session replays

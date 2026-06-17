@@ -42,7 +42,7 @@ This is the forward–backward scheme: stable for the gravity waves up to a Cour
 on the C grid. `f dt` and `r dt` must stay under 0.5; the model checks all three before the first
 step (`Shallow.check`) and the schema ranges are checked on every change of a parameter.
 
-With `nonlinear = 1` the depth is `h + η` (at least 0; the model does not flood dry land) and the
+With `nonlinear = 1` the depth is `h + η` (at least 0; without `flooding` the model does not flood dry land, see [flooding.md](../flooding.md)) and the
 velocity is also advected, with the semi-Lagrangian step of the fluid on the double-buffered
 `u` and `v`. Waves then steepen and slow in shallow water. A step allocates nothing.
 
@@ -59,11 +59,14 @@ velocity is also advected, with the semi-Lagrangian step of the fluid on the dou
 | `nonlinear` | 0 | 0 – 1 | 0 linear, 1 with advection and the full depth |
 | `edges` | 1 | 0 – 2 | border (restart only): 0 channel (periodic left and right, walls above and below), 1 closed basin, 2 open sea |
 | `sponge` | 10 | 0 – 64 | width in cells of the absorbing border of the open sea (restart only) |
-| `seabed` | 0 | 0 – 2 | shape of the sea floor (restart only): 0 flat, 1 shelf, 2 seamount |
-| `start` | 0 | 0 – 2 | initial state (restart only): 0 rest, 1 a front, 2 a Rossby wave |
+| `seabed` | 0 | 0 – 4 | shape of the sea floor (restart only): 0 flat, 1 shelf, 2 seamount, 3 plane beach, 4 beach with a bay (3 and 4 need `flooding`) |
+| `start` | 0 | 0 – 4 | initial state (restart only): 0 rest, 1 a front, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave |
 | `amp` | 0.2 | 0 – 20 | amplitude in m of the front or the wave |
 | `nx` | 128 | 16 – 512 | grid columns (restart only) |
 | `ny` | 96 | 16 – 512 | grid rows (restart only) |
+| `flooding` | 0 | 0 – 1 | 1 floods and dries the shore (restart only; needs `nonlinear`) |
+| `dryDepth` | 0.01 | 10⁻⁶ – 10 | water in m below which a face is dry |
+| `slope` | 0.05 | 10⁻³ – 1 | rise of a plane beach (restart only) |
 
 The **open sea** absorbs: within `sponge` cells of the border `η`, `u` and `v` are pulled to zero
 by up to 10 % a step at the border, with a quadratic ramp, so that waves leave without coming back. About
@@ -80,6 +83,8 @@ it. The **shelf** rises from the full depth at 55 % of the width to 5 % of it at
 | Rossby wave | channel, 500 m, β = 4·10⁻¹¹, 96 × 48 at 50 km | a balanced wave whose pattern drifts west with the water moving along the lines of equal height |
 | Kelvin wave | closed basin, 200 m, 96 × 200 at 10 km | a bump at the west coast sends a wave south along it, trapped within `R` of the coast |
 | Harbour | open, 40 m, nonlinear, 120 × 80 at 2 km | a wave front meets a breakwater with a gap and an island: diffraction |
+| Beach run-up | open, 100 m, flooding, 120 × 40 at 2.5 km | a 6 m solitary wave runs up a plane beach and back |
+| Harbour flood | open, 100 m, flooding, 120 × 60 at 2.5 km | an 8 m solitary wave comes ashore at a bay |
 
 A preset sets parameters and, for Tsunami, Kelvin wave and Harbour, paints at step 0 as ordinary
 interventions, so it is part of the manifest. Choosing one in the Lab starts a new run.
@@ -87,10 +92,11 @@ interventions, so it is part of the manifest. Choosing one in the Lab starts a n
 ## Probes and views
 
 Probes, in this order: `mass` (volume above rest, m³), `energy` (m⁵/s², kinetic plus potential
-per unit of area, summed), `max_height`, `min_height`, `max_speed`.
+per unit of area, summed), `max_height`, `min_height`, `max_speed`, and with flooding
+`wet_fraction`, `flooded_area`, `runup`, `max_runup`, `max_inundation` ([flooding.md](../flooding.md)).
 
 Slices of the state: `height`, `speed`, `vorticity` (positive counter-clockwise), `depth` (at rest,
-with the seabed) and `land`. The Lab shows the height, a diverging map centred at zero, above
+with the seabed), `land`, and `water` (depth of the water now) and `dry`. The Lab shows the height, a diverging map centred at zero, above
 plots of the energy and the highest surface over the last 200 000 s; `ShallowViews` also has the
 speed, the vorticity and the depth.
 
@@ -104,7 +110,7 @@ speed, the vorticity and the depth.
 Land closes the faces around it; the cells it covers lose their water and their flow (the `mass`
 probe changes), and cells that are erased come back at rest at height 0. In the Lab the tools are **Uplift**
 (the right button lowers), **Drop** (the other way round), **Land** (the right button erases) and
-**Erase land**.
+**Erase land** and **Water level** (a flat layer of metres in a disc, the right button takes it away).
 
 ## Checks
 
@@ -133,13 +139,15 @@ with the numpy output.
 
 ## Datasets
 
-- A run can be written as a NetCDF file with `height`, `speed`, `vorticity`, `depth` and `land` (`physis-cli export`, File → Export data…), in metres and seconds with `y` running south; see [datasets.md](../datasets.md).
+- A run can be written as a NetCDF file with `height`, `speed`, `vorticity`, `depth`, `land`, `water` and `dry` (`physis-cli export`, File → Export data…), in metres and seconds with `y` running south; see [datasets.md](../datasets.md).
 
 ## Limits
 
 - The reference is linear: the nonlinear mode is tested for conservation, the steepening and
   the right limit at small amplitude, not against another implementation.
-- There is no flooding: a cell whose depth would be negative is held at zero depth.
+- Without `flooding = 1` there is no flooding: a cell whose depth would be negative is held at
+  zero depth. With it the sea floods and dries; the run-up is damped by the advection
+  (0.77 of Synolakis' law for H/d = 0.0185), see [flooding.md](../flooding.md).
 - The step is fixed at 50 s, so a cell cannot be smaller than `c dt / 0.7` (14.2 km for 4 km of
   water). Finer cells need shallower water or a smaller `g`; the model refuses the run otherwise.
 - Spherical geometry, tides and real coastlines belong to later milestones.

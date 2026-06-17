@@ -79,6 +79,15 @@ rates, roll wavelength and Nusselt numbers. `tools/shallow_reference.py` does it
 shallow-water scheme: the seiche period and its order of convergence, the wave speed, the Rossby
 radius, the Kelvin wave, the Rossby drift, shoaling and the sponge.
 
+## Wetting and drying
+
+The shallow-water model with `flooding = 1` ([flooding.md](flooding.md)) keeps the surface `η`
+and the bed `z` and sets a dry cell's surface to its bed, which makes a lake at rest exact. The
+face depth is taken over the sill (the higher of the two floors), a face without water carries no
+flow, and the outflow of every cell is limited to the water it holds (`Staggered.limitOutflow`),
+which keeps the depth non-negative and the volume exact. `tools/shallow_flood_reference.py` is
+an independent numpy version; the checks are a lake at rest, Thacker's bowl and Synolakis' run-up.
+
 ## Determinism
 
 All of it is plain loops over arrays in a fixed order, with no parallelism. The only

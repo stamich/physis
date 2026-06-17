@@ -36,7 +36,11 @@ Milestone 0.9.0 adds **NetCDF export**: any run as a classic NetCDF file (CF met
 time, a digest per record and the manifest inside), from `physis-cli export`, **File → Export data…**
 in the Lab and `physis-cli sweep --export`, with a writer and reader of the format written for
 Physis and checked against `libnetcdf`, and `physis-cli verify`, which replays a file and compares it
-bit for bit.
+bit for bit. Milestone 0.10.0 adds **flooding** to the shallow-water model: a sea floor that rises
+above the sea, a solitary wave or N-wave that runs up a beach and floods it, a bay, run-up and
+flood probes, a depth view with the shoreline, a sea floor read from a NetCDF file
+(`--bathymetry`, with the file's digest in the manifest) and two Lab presets, checked against
+Thacker's bowl, Synolakis' run-up law and a numpy reference.
 
 ## Modules
 

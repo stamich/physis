@@ -115,7 +115,7 @@ shows its radius.
 | Physarum | **Paint food** (right button erases), **Erase food**, **Paint trail** |
 | Fluids | **Smoke** (dye, right button erases), **Push sideways** and **Push up** (value: speed, right button pushes the other way), **Wall** (right button erases), **Erase wall** |
 | Convection | **Heat spot** and **Cool spot** (value: how much warmer or colder than conduction; the right button resets the place), **Wall** (right button erases), **Erase wall** |
-| Shallow water | **Uplift** and **Drop** (value: metres; the right button does the opposite), **Land** (right button erases), **Erase land** |
+| Shallow water | **Uplift** and **Drop** (value: metres; the right button does the opposite), **Land** (right button erases), **Erase land**, **Water level** (value: metres of a flat layer; the right button takes it away) |
 
 The left button applies the tool and dragging paints a line; the right button erases where the
 tool paints. The mouse wheel over the view changes the radius, the slider and the value field do
