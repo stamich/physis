@@ -2,6 +2,69 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.10.0 — Flooding and real sea floors
+
+The shallow-water sea can now come ashore. A sea floor rises above the level of the sea, a wave
+runs up it and floods the shore, the water runs back; the volume stays exact and the depth never
+goes below zero. Without `flooding = 1` nothing changes and every earlier run has the same digest.
+
+### Added
+
+- **fields**: `Staggered.waterDepth`, `sillDepthU`, `sillDepthV` (the depth of the water over the
+  sill of a face, and whether the face carries flow) and `limitOutflow` (no cell gives away more
+  water than it holds).
+- **shallow**: parameters `flooding`, `dryDepth` and `slope`; sea floors 3 (plane beach) and 4
+  (beach with a bay); starts 3 (solitary wave) and 4 (N-wave); a lake at rest stays at rest
+  exactly; five probes after the old five (`wet_fraction`, `flooded_area`, `runup`, `max_runup`,
+  `max_inundation`); the slices `water` and `dry` in the state and in datasets; a water-depth
+  view whose grey edge is the shoreline; [docs/flooding.md](docs/flooding.md).
+- **core, netcdf, CLI**: the intervention `Load`, which names a file and the digest of its bytes
+  (`Rasters`, `Raster`); `NcRaster` reads the variable `elevation` of a NetCDF file; `--bathymetry
+  file.nc` sets the floor of a shallow run from it. The manifest holds the file name and digest,
+  never the values, and a replay or `verify` refuses a file with another digest.
+- **Lab**: presets **Beach run-up** and **Harbour flood**, and the **Water level** tool.
+- **CLI**: `sweep --preset "Beach run-up" --sweep amp=4,8,12` is a table of run-up, since the new
+  probes are columns of a sweep.
+- **tools**: `tools/shallow_flood_reference.py`, an independent numpy scheme for a 1D beach and
+  Thacker's bowl.
+
+### Verified
+
+- Lake at rest: bit for bit unchanged over 2000 steps on a plane beach and on a beach with a bay.
+- Volume exact to rounding and depth at or above zero in every flooding run of the tests.
+- Run-up of a solitary wave on a 1:19.85 beach (grid 0.25 d): the numpy reference gives
+  R/d = 0.03756 for H/d = 0.01 and 0.06664 for H/d = 0.0185; the Scala model is within 3 % of
+  both, and within the test bands of Synolakis' law (below).
+- Thacker's parabolic bowl, L1 error of the depth over a period: 5.8 % at dx = 0.2, 4.5 % at 0.1
+  and 1.9 % at 0.05 (numpy), in the Scala test under 7 % and finer is better than coarser.
+- Speed on the CI runner, 256 × 256 cells with a wave on a beach: 5.30 million cell updates a
+  second with flooding against 6.22 million for the nonlinear sea without it, 75.6 million for the
+  linear sea; a step of the default sea takes 0.16 ms.
+
+### Differences from the plan
+
+- The plan named the dataset fields `wet` and `max_depth`. The fields are `water` (depth of the
+  water, m) and `dry` (1 where there is land or dry shore); the highest run-up and the deepest
+  water are the probes `max_runup` and `max_inundation`, which datasets carry as time series.
+- **The run-up is smaller than Synolakis' law.** The advection of the velocity is semi-Lagrangian
+  and damps the swash: R/d is 0.77 of the law's 2.831 √(cot β) (H/d)^1.25 for H/d = 0.0185 and 0.94
+  for H/d = 0.01 at 0.25 d resolution; 0.74 at 0.5 d, 0.81 at 0.125 d. For H/d = 0.03 the numpy
+  scheme reaches 0.58 of the law, where the law is no longer valid (the wave breaks). The tests
+  check the reference and a band around the law, not the law.
+- The Lab presets use a sea 100 m deep on 2.5 km cells, because the step is fixed at 50 s.
+- The sea floor from a file is stretched over the whole grid with bilinear sampling and no map
+  projection; the spherical grid and flooding on it are left to 0.11.0. Flooding applies to the
+  nonlinear equations only.
+
+### Not measured
+
+- How the Lab looks and feels with the new presets and the depth view on a real display.
+- Grids beyond 256 × 256, and the speed on a machine other than the CI runners.
+- The run-up of waves that break, and any comparison with measured tsunamis or with a code that
+  treats breaking.
+- A NetCDF bathymetry other than the files made in the tests (a real GEBCO file has other
+  variable names and may be too large to read whole).
+
 ## 0.9.0 — NetCDF export
 
 Any run can be written as a NetCDF file: the fields of the model at a series of times, the
