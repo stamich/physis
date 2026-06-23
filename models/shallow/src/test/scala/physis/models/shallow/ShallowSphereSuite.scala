@@ -120,3 +120,41 @@ class ShallowSphereSuite extends munit.FunSuite:
     assert(worst < 5.0, s"the height moved by $worst m")
     assert(maxAbs(r.state.u) > 0.9 * maxAbs(u0))
   }
+
+  /** A band of 1° cells up to 88°, where the cells are 4 km wide. */
+  private def polarBand(polar: Double): ShallowParams =
+    params(geometry = 1, nx = 360, ny = 176, latMax = 88.0, polar = polar, depth = 4000.0)
+
+  test("without the filter the narrow rows near the edge limit the step; with it they do not") {
+    assert(Shallow.check(polarBand(0.0), dt).isLeft)
+    assert(Shallow.check(polarBand(75.0), dt).isRight)
+  }
+
+  test("the filter passes: none below the polar latitude, more toward the edge") {
+    assertEquals(Shallow.polarPasses(75.0, 60.0), 0)
+    assertEquals(Shallow.polarPasses(0.0, 87.0), 0)
+    val near = Shallow.polarPasses(75.0, 80.0)
+    val far = Shallow.polarPasses(75.0, 87.5)
+    assert(near >= 1 && far > near, s"$near then $far")
+  }
+
+  test("with the filter a band to 88 degrees stays stable and keeps its volume") {
+    val r = run(polarBand(75.0), dt)
+    hump(r.state, 100.0, 12.0, 4.0, 1.0)
+    val v0 = sphereVolume(r)
+    r.runSteps(60)
+    val worst0 = (for j <- 0 until 176; i <- 0 until 360 yield r.state.eta(i, j)).max
+    assert(
+      math.abs(sphereVolume(r) - v0) < 1e-9 * math.abs(v0),
+      s"volume $v0 became ${sphereVolume(r)}, the highest point is $worst0 m"
+    )
+    val worst = (for j <- 0 until 176; i <- 0 until 360 yield math.abs(r.state.eta(i, j))).max
+    assert(worst < 2.0, s"the height reached $worst m")
+  }
+
+  test("the filter leaves a sea at rest at rest") {
+    val r = run(polarBand(75.0), dt)
+    val before = r.digest
+    r.runSteps(5)
+    assertEquals(r.digest, before)
+  }

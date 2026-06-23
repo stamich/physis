@@ -32,7 +32,8 @@ object ShallowSupport:
       geometry: Int = 0,
       radius: Double = 6.371e6,
       rotation: Double = 7.292e-5,
-      latMax: Double = 80.0
+      latMax: Double = 80.0,
+      polar: Double = 0.0
   ): ShallowParams = ShallowParams(
     gravity = gravity,
     depth = depth,
@@ -54,7 +55,8 @@ object ShallowSupport:
     geometry = geometry,
     radius = radius,
     rotation = rotation,
-    latMax = latMax
+    latMax = latMax,
+    polar = polar
   )
 
   /**

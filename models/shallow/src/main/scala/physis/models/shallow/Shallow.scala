@@ -55,6 +55,9 @@ import physis.fields.{
  *                `2 Ω sin(latitude)`
  * @param latMax  the latitude of the edges of the band, in degrees (needs a restart); the edges
  *                are walls, the poles are not on the grid
+ * @param polar   poleward of this latitude, in degrees, the fields are smoothed along the rows
+ *                after every step, so that the narrow cells near the edge of the band do not limit
+ *                the step (0 for no smoothing)
  */
 final case class ShallowParams(
     gravity: Double,
@@ -77,7 +80,8 @@ final case class ShallowParams(
     geometry: Int = 0,
     radius: Double = 6.371e6,
     rotation: Double = 7.292e-5,
-    latMax: Double = 80.0
+    latMax: Double = 80.0,
+    polar: Double = 0.0
 )
 
 object ShallowParams:
@@ -245,6 +249,14 @@ object ShallowParams:
       unit = "°",
       doc = "Latitude of the northern and southern edges of the band (walls)",
       restart = true
+    ),
+    ParamSpec(
+      "polar",
+      default = 0.0,
+      min = 0.0,
+      max = 89.0,
+      unit = "°",
+      doc = "Poleward of this latitude the fields are smoothed along the rows (0 is off)"
     )
   )
 
@@ -285,6 +297,9 @@ final class ShallowState(
   private val isSphere: Boolean = sphere.isDefined
   private val fRowC = new Array[Double](ny)
   private val fRowF = new Array[Double](ny + 1)
+  private val passesC = new Array[Int](ny)
+  private val passesF = new Array[Int](ny + 1)
+  private val rowBuffer = new Array[Double](nx)
 
   /** The height of the surface above rest, in m. */
   val eta: Field2D = new Field2D(mac.cells)
@@ -426,6 +441,14 @@ final class ShallowState(
       j = 0
       while j <= ny do
         fRowF(j) = 2.0 * p.rotation * geo.sinF(j)
+        j += 1
+      j = 0
+      while j < ny do
+        passesC(j) = Shallow.polarPasses(p.polar, math.toDegrees(geo.latC(j)))
+        j += 1
+      j = 0
+      while j <= ny do
+        passesF(j) = Shallow.polarPasses(p.polar, math.toDegrees(geo.latF(j)))
         j += 1
     if flooding then refreshBed()
 
@@ -708,8 +731,48 @@ final class ShallowState(
     if flooding then floodContinuity(dt) else continuity(dt)
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
+    if isSphere && p.polar > 0.0 then polarFilter()
     absorb()
     if flooding then trackFlood()
+
+  /**
+   * Smooths η, u and v along the rows poleward of the polar latitude, with the 1-2-1 filter
+   * repeated as often as the row is narrower than the cells at that latitude (see
+   * [[Shallow.polarPasses]]). The filter conserves the volume of every row, and the faces that
+   * are shut stay shut.
+   */
+  private def polarFilter(): Unit =
+    var j = 0
+    while j < ny do
+      val n = passesC(j)
+      if n > 0 then
+        smoothRow(eta, j, nx, n, null)
+        smoothRow(u, j, nx, n, openU)
+      j += 1
+    j = 1
+    while j < ny do
+      val n = passesF(j)
+      if n > 0 then smoothRow(v, j, nx, n, openV)
+      j += 1
+
+  /** `n` passes of the periodic 1-2-1 filter over the first `count` samples of row `j`. */
+  private def smoothRow(f: Field2D, j: Int, count: Int, n: Int, open: Field2D): Unit =
+    val b = rowBuffer
+    var pass = 0
+    while pass < n do
+      var i = 0
+      while i < count do
+        b(i) = f(i, j)
+        i += 1
+      i = 0
+      while i < count do
+        val w = if i > 0 then b(i - 1) else b(count - 1)
+        val e = if i < count - 1 then b(i + 1) else b(0)
+        val s = 0.25 * w + 0.5 * b(i) + 0.25 * e
+        f(i, j) = if open == null || open(i, j) != 0.0 then s else 0.0
+        i += 1
+      pass += 1
+    if f.nx > count then f(count, j) = f(0, j)
 
   /** Keeps the highest run-up and the deepest water over the shore that the run has seen. */
   private def trackFlood(): Unit =
@@ -1302,6 +1365,17 @@ object Shallow extends Model[ShallowParams]:
         math.max(math.abs(coriolis(p, p.ny.toDouble)), math.abs(p.f0))
       )
 
+  /**
+   * The number of passes of the 1-2-1 filter at latitude `lat` (degrees) when it acts poleward of
+   * `polar` degrees: each pass damps the shortest waves of a row, and the number is chosen so
+   * that the row is as stiff as it would be at `polar`, `ceil(((cos polar / cos lat)² - 1) / 2)`.
+   */
+  def polarPasses(polar: Double, lat: Double): Int =
+    if polar <= 0.0 || math.abs(lat) <= polar then 0
+    else
+      val r = math.cos(math.toRadians(polar)) / math.cos(math.toRadians(lat))
+      math.ceil(0.5 * (r * r - 1.0)).toInt
+
   /** The geometry of the sphere of `p`, or why there is none. */
   def sphereOf(p: ShallowParams): Either[String, SphereGrid] =
     scala.util.Try(new SphereGrid(p.nx, p.ny, p.radius, p.latMax)).toEither.left.map(_.getMessage)
@@ -1311,7 +1385,9 @@ object Shallow extends Model[ShallowParams]:
    * `√2`, so that it can be held to the same limit as `c dt / dx` on the plane.
    */
   def sphereCourant(p: ShallowParams, g: SphereGrid, dt: Double): Double =
-    waveSpeed(p) * dt * math.sqrt(1.0 / (g.dxMin * g.dxMin) + 1.0 / (g.dy * g.dy)) / math.sqrt(2.0)
+    val dxPolar = g.radius * math.cos(math.toRadians(p.polar)) * g.dlam
+    val dxMin = if p.polar > 0.0 then math.max(g.dxMin, dxPolar) else g.dxMin
+    waveSpeed(p) * dt * math.sqrt(1.0 / (dxMin * dxMin) + 1.0 / (g.dy * g.dy)) / math.sqrt(2.0)
 
   /** The largest `f dt` or `r dt` the step allows. */
   val MaxRateNumber: Double = 0.5
