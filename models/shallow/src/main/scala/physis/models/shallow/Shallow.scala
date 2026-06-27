@@ -957,7 +957,9 @@ final class ShallowState(
     while j < ny do
       var i = 0
       while i < nx do
-        val z = raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
+        val z =
+          if isSphere then raster.sampleAt(-180.0 + (i + 0.5) * 360.0 / nx, geo.latDegC(j))
+          else raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
         shape(i, j) = -z / p.depth
         i += 1
       j += 1
@@ -1639,6 +1641,8 @@ object Shallow extends Model[ShallowParams]:
           Right(())
         case Intervention.Load(_, _, digest) =>
           if p.flooding == 0 then Left("a sea floor from a file needs flooding = 1")
+          else if p.geometry == 1 && Rasters.get(digest).exists(_.extent.isEmpty) then
+            Left("a sea floor for the sphere needs the coordinates 'lat' and 'lon' in the file")
           else
             Rasters.get(digest).foreach(state.loadSeafloor(_, p))
             Right(())

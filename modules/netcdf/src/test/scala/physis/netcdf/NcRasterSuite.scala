@@ -41,3 +41,40 @@ class NcRasterSuite extends munit.FunSuite:
     assert(NcRaster.read(file(None, values, "height")).left.exists(_.contains("elevation")))
     assert(NcRaster.read(Array[Byte](1, 2, 3)).isLeft)
   }
+
+  private def geoFile(
+      lat: Array[Double],
+      lon: Array[Double],
+      names: (String, String) = ("lat", "lon")
+  ) =
+    val schema = Schema(
+      Vector(Dim.fixed("y", 2), Dim.fixed("x", 3)),
+      Vector(Cf.conventions),
+      Vector(
+        Var(names._1, Vector("y"), NcType.Float64),
+        Var(names._2, Vector("x"), NcType.Float64),
+        Var("elevation", Vector("y", "x"), NcType.Float32)
+      )
+    )
+    val out = new ByteArrayOutputStream()
+    val fixed = Map(names._1 -> lat, names._2 -> lon, "elevation" -> values)
+    new NcWriter(out, schema, 0, fixed).finish()
+    out.toByteArray
+
+  test("lat and lon give the raster its place: edges half a spacing beyond the centres") {
+    val r = NcRaster.read(geoFile(Array(-10.0, 10.0), Array(0.0, 120.0, 240.0)))
+    val e = r.fold(m => fail(m), identity).extent.get
+    assertEquals((e.west, e.east, e.south, e.north), (-60.0, 300.0, -20.0, 20.0))
+    assert(e.global)
+    val names = ("latitude", "longitude")
+    val named = NcRaster.read(geoFile(Array(1.0, 0.0), Array(10.0, 11.0, 12.0), names))
+    assertEquals(named.fold(m => fail(m), identity).extent.map(_.north), Some(1.5))
+  }
+
+  test("a file without coordinates has no place, and irregular or impossible ones are refused") {
+    assertEquals(NcRaster.read(file(None, values)).fold(m => fail(m), identity).extent, None)
+    val uneven = NcRaster.read(geoFile(Array(0.0, 1.0), Array(0.0, 1.0, 5.0)))
+    assert(uneven.left.exists(_.contains("regularly")), uneven.toString)
+    val polar = NcRaster.read(geoFile(Array(80.0, 95.0), Array(0.0, 1.0, 2.0)))
+    assert(polar.left.exists(_.contains("poles")), polar.toString)
+  }
