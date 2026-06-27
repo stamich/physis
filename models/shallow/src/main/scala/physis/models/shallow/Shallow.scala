@@ -58,6 +58,11 @@ import physis.fields.{
  * @param polar   poleward of this latitude, in degrees, the fields are smoothed along the rows
  *                after every step, so that the narrow cells near the edge of the band do not limit
  *                the step (0 for no smoothing)
+ * @param watchLon the longitude of the point whose arrival time the `arrival` probe reports, in
+ *                degrees east (sphere only)
+ * @param watchLat its latitude, in degrees north
+ * @param arrivalLevel a wave has arrived where the surface first stands this far above or below
+ *                rest, in m (0 to stop recording arrivals; sphere only)
  */
 final case class ShallowParams(
     gravity: Double,
@@ -81,7 +86,10 @@ final case class ShallowParams(
     radius: Double = 6.371e6,
     rotation: Double = 7.292e-5,
     latMax: Double = 80.0,
-    polar: Double = 0.0
+    polar: Double = 0.0,
+    watchLon: Double = 0.0,
+    watchLat: Double = 0.0,
+    arrivalLevel: Double = 0.01
 )
 
 object ShallowParams:
@@ -257,6 +265,30 @@ object ShallowParams:
       max = 89.0,
       unit = "°",
       doc = "Poleward of this latitude the fields are smoothed along the rows (0 is off)"
+    ),
+    ParamSpec(
+      "watchLon",
+      default = 0.0,
+      min = -180.0,
+      max = 180.0,
+      unit = "°",
+      doc = "Longitude of the point whose arrival time is reported (sphere)"
+    ),
+    ParamSpec(
+      "watchLat",
+      default = 0.0,
+      min = -89.0,
+      max = 89.0,
+      unit = "°",
+      doc = "Latitude of the point whose arrival time is reported (sphere)"
+    ),
+    ParamSpec(
+      "arrivalLevel",
+      default = 0.01,
+      min = 0.0,
+      max = 10.0,
+      unit = "m",
+      doc = "A wave has arrived where the surface first moves this far from rest (0 is off)"
     )
   )
 
@@ -300,6 +332,12 @@ final class ShallowState(
   private val passesC = new Array[Int](ny)
   private val passesF = new Array[Int](ny + 1)
   private val rowBuffer = new Array[Double](nx)
+
+  // When the surface first moved by the arrival level, in s; -1 where it has not (sphere only).
+  private val arrivalMap = new Array[Double](nx * ny)
+  java.util.Arrays.fill(arrivalMap, -1.0)
+  private var clock = 0.0
+  private var watchCell = -1
 
   /** The height of the surface above rest, in m. */
   val eta: Field2D = new Field2D(mac.cells)
@@ -434,6 +472,7 @@ final class ShallowState(
     flooding = p.flooding != 0
     dryNow = p.dryDepth
     if isSphere then
+      watchCell = geo.rowOf(p.watchLat) * nx + geo.columnOf(p.watchLon)
       var j = 0
       while j < ny do
         fRowC(j) = 2.0 * p.rotation * geo.sinC(j)
@@ -733,7 +772,55 @@ final class ShallowState(
     momentum(p, dt)
     if isSphere && p.polar > 0.0 then polarFilter()
     absorb()
+    clock += dt
+    if isSphere && p.arrivalLevel > 0.0 then trackArrival(p.arrivalLevel)
     if flooding then trackFlood()
+
+  /** Notes the time at which each cell first has the surface `level` metres from rest. */
+  private def trackArrival(level: Double): Unit =
+    var k = 0
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        if arrivalMap(k) < 0.0 && math.abs(eta(i, j)) >= level then arrivalMap(k) = clock
+        k += 1
+        i += 1
+      j += 1
+
+  /** The time the wave reached the watched point, in s; -1 if it has not (or off the sphere). */
+  def arrivalAtWatch: Double = if watchCell >= 0 then arrivalMap(watchCell) else -1.0
+
+  /** Writes the arrival time of every cell (-1 where none yet), row by row, from `offset`. */
+  def arrivalInto(out: Array[Double], offset: Int): Unit =
+    System.arraycopy(arrivalMap, 0, out, offset, nx * ny)
+
+  /**
+   * Writes 1 in the cells that a meridian or a parallel of the graticule (every
+   * [[Shallow.GraticuleStep]] degrees) crosses, 0 elsewhere (and everywhere on the plane).
+   */
+  def graticuleInto(out: Array[Double], offset: Int): Unit =
+    val step = Shallow.GraticuleStep
+    val eps = 1e-9 // a line on the edge of a cell, up to rounding, belongs to it
+    var k = offset
+    var j = 0
+    while j < ny do
+      var latLine = false
+      if isSphere then
+        val north = math.toDegrees(geo.latF(j)) / step
+        val south = math.toDegrees(geo.latF(j + 1)) / step
+        latLine = math.floor(north + eps) > math.floor(south + eps)
+      var i = 0
+      while i < nx do
+        var lonLine = false
+        if isSphere then
+          val w = -180.0 + i * 360.0 / nx
+          val e = -180.0 + (i + 1) * 360.0 / nx
+          lonLine = math.floor(e / step + eps) > math.floor(w / step + eps)
+        out(k) = if latLine || lonLine then 1.0 else 0.0
+        k += 1
+        i += 1
+      j += 1
 
   /**
    * Smooths η, u and v along the rows poleward of the polar latitude, with the 1-2-1 filter
@@ -1304,10 +1391,10 @@ final class ShallowState(
 object ShallowState:
   /**
    * Live runs export the height, the speed, the vorticity, the depth, the land, the depth of the
-   * water and where it is dry.
+   * water, where it is dry, the graticule of the sphere and when the wave reached each cell.
    */
   given stateExport: StateExport[ShallowState] with
-    def size(state: ShallowState): Int = 7 * state.mac.cells.cells
+    def size(state: ShallowState): Int = 9 * state.mac.cells.cells
 
     def copyInto(state: ShallowState, out: Array[Double]): Unit =
       val n = state.mac.cells.cells
@@ -1318,6 +1405,8 @@ object ShallowState:
       state.land.field.copyInteriorInto(out, 4 * n)
       state.waterInto(out, 5 * n)
       state.dryInto(out, 6 * n)
+      state.graticuleInto(out, 7 * n)
+      state.arrivalInto(out, 8 * n)
 
     override def layout(state: ShallowState): IndexedSeq[Slice] =
       val g = state.mac.cells
@@ -1329,7 +1418,9 @@ object ShallowState:
         Slice("depth", 3 * n, g.nx, g.ny),
         Slice("land", 4 * n, g.nx, g.ny),
         Slice("water", 5 * n, g.nx, g.ny),
-        Slice("dry", 6 * n, g.nx, g.ny)
+        Slice("dry", 6 * n, g.nx, g.ny),
+        Slice("graticule", 7 * n, g.nx, g.ny),
+        Slice("arrival", 8 * n, g.nx, g.ny)
       )
 
 object Shallow extends Model[ShallowParams]:
@@ -1416,6 +1507,9 @@ object Shallow extends Model[ShallowParams]:
    */
   def waveWidth(p: ShallowParams): Double =
     math.max(math.sqrt(4.0 * p.depth * p.depth * p.depth / (3.0 * p.amp)), 5.0 * p.dx)
+
+  /** The spacing of the meridians and parallels of the graticule, in degrees. */
+  val GraticuleStep: Double = 30.0
 
   /** Width of the smoothed front of [[ShallowState.front]], in cells. */
   val FrontWidth: Double = 3.0
@@ -1588,6 +1682,10 @@ object Shallow extends Model[ShallowParams]:
   val maxInundation: Probe[ShallowState] =
     Probe[ShallowState]("max_inundation", "m")((s, _) => s.maxInundation)
 
+  /** When the wave reached the watched point, in s (-1 before; sphere only). */
+  val arrival: Probe[ShallowState] =
+    Probe[ShallowState]("arrival", "s")((s, _) => s.arrivalAtWatch)
+
   val probes: Vector[Probe[ShallowState]] =
     Vector(
       mass,
@@ -1599,5 +1697,6 @@ object Shallow extends Model[ShallowParams]:
       floodedArea,
       runup,
       maxRunup,
-      maxInundation
+      maxInundation,
+      arrival
     )

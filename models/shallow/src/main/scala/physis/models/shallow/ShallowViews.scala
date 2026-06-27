@@ -44,6 +44,33 @@ object ShallowViews:
       case h: View.Heatmap => h
       case other => throw new IllegalStateException(s"not a heatmap: $other")
 
+  /**
+   * The map of the globe: the height on the longitude-latitude grid, west to east and north at
+   * the top, with the meridians and parallels every 30° drawn over it.
+   */
+  val map: View.Heatmap =
+    View.Heatmap(
+      "height",
+      ValueRange.SymmetricAuto,
+      Colormap.Diverging,
+      "surface height (m)",
+      overlay = Some("graticule")
+    ) match
+      case h: View.Heatmap => h
+      case other => throw new IllegalStateException(s"not a heatmap: $other")
+
+  /** When the wave first reached each place, in s (-1 where it has not yet). */
+  val arrivalMap: View.Heatmap =
+    View.Heatmap(
+      "arrival",
+      ValueRange.Auto,
+      Colormap.Viridis,
+      "arrival time (s)",
+      overlay = Some("graticule")
+    ) match
+      case h: View.Heatmap => h
+      case other => throw new IllegalStateException(s"not a heatmap: $other")
+
   /** Channels of the probes in [[Shallow.probes]] order. */
   val energy: Channel = Channel.ProbeAt(1, "energy")
   val highest: Channel = Channel.ProbeAt(2, "highest surface")
@@ -69,3 +96,6 @@ object ShallowViews:
 
   /** The speed above, the plots below. */
   val flow: View = View.Layout(Seq(speed, plots), Direction.Vertical)
+
+  /** The map of the globe above, the plots below. */
+  val globe: View = View.Layout(Seq(map, plots), Direction.Vertical)

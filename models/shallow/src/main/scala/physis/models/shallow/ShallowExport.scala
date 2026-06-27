@@ -33,7 +33,9 @@ object ShallowExport:
         "dry",
         "1 where there is land or the shore is dry, 0 where there is water",
         "1"
-      )
+      ),
+      FieldMeta("graticule", "graticule", "1 on the meridians and parallels of the map", "1"),
+      FieldMeta("arrival", "arrival", "time the wave first reached the cell, -1 before", "s")
     ),
     dx = p.dx,
     lengthUnits = "m",

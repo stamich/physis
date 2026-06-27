@@ -50,10 +50,20 @@ class ShallowViewsSuite extends munit.FunSuite:
     val g = s.mac.cells
     val out = new Array[Double](ShallowState.stateExport.size(s))
     ShallowState.stateExport.copyInto(s, out)
-    assertEquals(out.length, 7 * g.cells)
+    assertEquals(out.length, 9 * g.cells)
     assertEquals(
       ShallowState.stateExport.layout(s).map(_.name),
-      Vector("height", "speed", "vorticity", "depth", "land", "water", "dry")
+      Vector(
+        "height",
+        "speed",
+        "vorticity",
+        "depth",
+        "land",
+        "water",
+        "dry",
+        "graticule",
+        "arrival"
+      )
     )
     assertEqualsDouble(out(8 * g.nx + 16), s.eta(16, 8), 1e-12)
     val depth = out.slice(3 * g.cells, 4 * g.cells)
