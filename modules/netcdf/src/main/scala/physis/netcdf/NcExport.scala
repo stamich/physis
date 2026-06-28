@@ -41,7 +41,7 @@ object NcExport:
   val Cancelled: String = "cancelled"
 
   /** Names the writer uses itself. */
-  private val Reserved = Set("time", "step", "digest_hi", "digest_lo", "x", "y")
+  private val Reserved = Set("time", "step", "digest_hi", "digest_lo", "x", "y", "lon", "lat")
 
   /**
    * How many records a run that is now at step `from` writes up to step `steps`: the one now,
@@ -107,10 +107,12 @@ object NcExport:
               val records = recordCount(from, steps, options.every)
               val tpe = if options.single then NcType.Float32 else NcType.Float64
               val grid = sizes.headOption
+              val (xName, yName) = if spec.geo.isDefined then ("lon", "lat") else ("x", "y")
               val dims = Vector(Dim.record("time")) ++
-                grid.toVector.flatMap((w, h) => Vector(Dim.fixed("y", h), Dim.fixed("x", w)))
+                grid.toVector.flatMap((w, h) => Vector(Dim.fixed(yName, h), Dim.fixed(xName, w)))
               val space =
-                if grid.isDefined then
+                if grid.isDefined && spec.geo.isDefined then Vector(Cf.longitude, Cf.latitude)
+                else if grid.isDefined then
                   Vector(
                     Cf.axis("x", "X", spec.lengthUnits, "x of the centre of the cell"),
                     Cf.axis(
@@ -126,7 +128,7 @@ object NcExport:
               val fieldVars = fields.map { (f, _) =>
                 Var(
                   f.name,
-                  Vector("time", "y", "x"),
+                  Vector("time", yName, xName),
                   tpe,
                   Vector(Attr.text("long_name", f.longName), Attr.text("units", f.units)) ++
                     f.standardName.map(Attr.text("standard_name", _)).toVector
@@ -265,9 +267,14 @@ object NcExport:
           Left(s"cannot write the dataset: ${e.getMessage}")
     }
 
-  /** The values of the axes `x` and `y`: the centres of the cells. */
+  /** The values of the axes `x` and `y` (or `lon` and `lat`): the centres of the cells. */
   private def axisValues(p: Plan[?], spec: ExportSpec): Map[String, Array[Double]] =
     p.schema.fixedVars.map { v =>
       val n = p.schema.dim(v.name).flatMap(_.size).getOrElse(0)
-      v.name -> Array.tabulate(n)(i => (i + 0.5) * spec.dx)
+      val centre = (i: Int) => i + 0.5
+      val values = spec.geo match
+        case Some(g) if v.name == "lon" => Array.tabulate(n)(i => g.west + centre(i) * g.lonStep)
+        case Some(g) if v.name == "lat" => Array.tabulate(n)(j => g.north - centre(j) * g.latStep)
+        case _ => Array.tabulate(n)(i => centre(i) * spec.dx)
+      v.name -> values
     }.toMap

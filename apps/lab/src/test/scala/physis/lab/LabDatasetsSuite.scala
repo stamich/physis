@@ -155,3 +155,38 @@ class LabDatasetsSuite extends munit.FunSuite:
         .isLeft
     )
   }
+
+  tmp.test("the dataset of a globe is the one the command line writes, with lon and lat") { dir =>
+    val run = Physis
+      .model(Shallow)
+      .overrides(Map("geometry" -> 1.0, "nx" -> 36.0, "ny" -> 16.0, "latMax" -> 80.0))
+      .stepping(Shallow.stepping)
+      .seed(1L)
+      .build()
+    val _ = run.intervene(Intervention.Pulse("height", 18.0, 8.0, 2.0, 1.0))
+    run.runSteps(20)
+    val manifest = run.manifest(run.time).copy(steps = Some(20L), digest = Some(run.digest))
+    val file = dir.resolve("lab.nc")
+    val report = LabDatasets
+      .save(Catalog.shallow, manifest, Catalog.registry, file, DatasetOptions(every = 10))
+      .fold(e => fail(e), identity)
+    val json = report.manifest.getOrElse(fail("no manifest written"))
+    val cli = dir.resolve("cli.nc")
+    val err = new ByteArrayOutputStream()
+    val code = physis.cli.Cli.execute(
+      List("replay", json.toString, "--export", cli.toString, "--every", "10"),
+      new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+      new PrintStream(err, true, StandardCharsets.UTF_8)
+    )
+    assertEquals(code, 0, err.toString(StandardCharsets.UTF_8))
+    val a = NcFile.read(file).fold(e => fail(e), identity)
+    val b = NcFile.read(cli).fold(e => fail(e), identity)
+    assertEquals(NcCompare.diff(a, b), None)
+    assert(a.schema.variable("lon").isDefined && a.schema.variable("lat").isDefined)
+    val verify = physis.cli.Cli.execute(
+      List("verify", file.toString),
+      new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+      new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8)
+    )
+    assertEquals(verify, 0)
+  }

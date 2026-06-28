@@ -30,6 +30,34 @@ object Cf:
       ) ++ (if down then Vector(Attr.text("positive", "down")) else Vector.empty)
     )
 
+  /** The longitude coordinate `lon`, in degrees east. */
+  val longitude: Var =
+    Var(
+      "lon",
+      Vector("lon"),
+      NcType.Float64,
+      Vector(
+        Attr.text("axis", "X"),
+        Attr.text("standard_name", "longitude"),
+        Attr.text("long_name", "longitude of the centre of the cell"),
+        Attr.text("units", "degrees_east")
+      )
+    )
+
+  /** The latitude coordinate `lat`, in degrees north (it decreases: row 0 is the north). */
+  val latitude: Var =
+    Var(
+      "lat",
+      Vector("lat"),
+      NcType.Float64,
+      Vector(
+        Attr.text("axis", "Y"),
+        Attr.text("standard_name", "latitude"),
+        Attr.text("long_name", "latitude of the centre of the cell"),
+        Attr.text("units", "degrees_north")
+      )
+    )
+
   /** The time coordinate, on the record dimension `name`. */
   def time(name: String, units: String): Var =
     Var(

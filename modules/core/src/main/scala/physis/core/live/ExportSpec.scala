@@ -36,6 +36,8 @@ object FieldMeta:
  * @param lengthUnits unit of length: `m` for a model in metres, "1" for cells of size 1
  * @param timeUnits   unit of the model's time: `s`, or "1" for a model in steps or scaled units
  * @param yDown       whether `y` runs down the picture (row 0 is the north edge)
+ * @param geo         for a field on the globe, where the grid lies: the file then has the axes
+ *                    `lon` and `lat` in degrees instead of `x` and `y` in `lengthUnits`
  */
 final case class ExportSpec(
     title: String,
@@ -43,7 +45,8 @@ final case class ExportSpec(
     dx: Double = 1.0,
     lengthUnits: String = "1",
     timeUnits: String = "1",
-    yDown: Boolean = false
+    yDown: Boolean = false,
+    geo: Option[ExportSpec.Geo] = None
 ):
   require(dx > 0.0 && !dx.isInfinite, s"export: cell size $dx")
   require(
@@ -52,6 +55,13 @@ final case class ExportSpec(
   )
 
 object ExportSpec:
+  /**
+   * A grid of longitude and latitude: column `i` is centred at `west + (i + 0.5) lonStep` degrees
+   * east and row `j` at `north - (j + 0.5) latStep` degrees north (row 0 is the north).
+   */
+  final case class Geo(west: Double, lonStep: Double, north: Double, latStep: Double):
+    require(lonStep > 0.0 && latStep > 0.0, s"export: steps $lonStep, $latStep degrees")
+
   /** A dataset with no fields: only the probes are written (the ODE models, the flock). */
   def probesOnly(title: String, timeUnits: String = "1"): ExportSpec =
     ExportSpec(title, Vector.empty, timeUnits = timeUnits)
