@@ -12,7 +12,7 @@ class ShallowLabSuite extends munit.FunSuite:
   test("shallow water offers uplift, drop and land whose strokes the model accepts") {
     assertEquals(
       Catalog.shallow.tools.map(_.spec.name),
-      Vector("Uplift", "Drop", "Land", "Erase land", "Water level")
+      Vector("Uplift", "Drop", "Quake", "Land", "Erase land", "Water level")
     )
     val run = Physis
       .model(Shallow)
@@ -61,10 +61,32 @@ class ShallowLabSuite extends munit.FunSuite:
     assert(Catalog.shallow.wraps(Map("edges" -> 0.0)))
     assert(!Catalog.shallow.wraps(Map("edges" -> 1.0)))
     assert(!Catalog.shallow.wraps(Map("edges" -> 2.0)))
+    // the globe goes round whatever its edges
+    assert(Catalog.shallow.wraps(Map("edges" -> 1.0, "geometry" -> 1.0)))
+  }
+
+  test("on the globe the read-out tells the longitude and latitude of the cell") {
+    val globe = Map("geometry" -> 1.0, "nx" -> 360.0, "ny" -> 160.0, "latMax" -> 80.0)
+    assertEquals(Catalog.shallow.locate(globe, 0, 0), Some("179.5°W 79.5°N"))
+    assertEquals(Catalog.shallow.locate(globe, 359, 159), Some("179.5°E 79.5°S"))
+    assertEquals(Catalog.shallow.locate(globe, 180, 80), Some("0.5°E 0.5°S"))
+    assertEquals(Catalog.shallow.locate(Map("nx" -> 360.0), 3, 3), None)
+    assertEquals(Catalog.wave.locate(Map.empty, 3, 3), None)
+  }
+
+  test("a quake rises with its magnitude and the right button reverses it") {
+    def amplitude(mag: Double, secondary: Boolean): Double =
+      tool("Quake").make(dab, 5.0, mag, secondary) match
+        case Intervention.Pulse("height", _, _, _, a) => a
+        case other => fail(s"not a pulse of height: $other")
+    assertEqualsDouble(amplitude(7.0, false), 1.0, 1e-12)
+    assertEqualsDouble(amplitude(9.0, false), 10.0, 1e-9)
+    assertEqualsDouble(amplitude(9.0, true), -10.0, 1e-9)
+    assert(amplitude(9.5, false) > amplitude(8.0, false))
   }
 
   test("every preset is offered, and the tsunami restarts with its sea floor raised") {
-    assertEquals(Catalog.shallow.presets.size, 7)
+    assertEquals(Catalog.shallow.presets.size, 10)
     val preset = Catalog.shallow.presets.find(_.name == "Tsunami").get
     Catalog.shallow.presetCommand(preset, Map.empty) match
       case physis.core.live.Command.Restart(values, _, Some(paint)) =>

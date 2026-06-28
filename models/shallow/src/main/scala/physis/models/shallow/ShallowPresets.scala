@@ -202,5 +202,91 @@ object ShallowPresets:
     none
   )
 
+  /** Where the place lies in a picture of `nx` by `ny` cells of the band to 80° (cell units). */
+  private def cellOf(nx: Int, ny: Int, lon: Double, lat: Double): (Double, Double) =
+    ((lon + 180.0) / 360.0 * nx, (80.0 - lat) / 160.0 * ny)
+
+  private def globe(extra: (String, Double)*): Map[String, Double] =
+    Map(
+      "geometry" -> 1.0,
+      "latMax" -> 80.0,
+      "radius" -> 6.371e6,
+      "rotation" -> 7.292e-5,
+      "gravity" -> 9.81,
+      "friction" -> 0.0,
+      "edges" -> 1.0,
+      "seabed" -> 0.0,
+      "flooding" -> 0.0,
+      "polar" -> 0.0
+    ) ++ extra
+
+  val pacific: ShallowPreset = ShallowPreset(
+    "Pacific tsunami",
+    "A rise of the sea floor off Japan on the whole globe, an ocean 4 km deep with no " +
+      "continents: the waves spread over a sphere at 713 km/h, and the probe 'arrival' reports " +
+      "when they reach a point near Hawaii. Quake paints more sources",
+    globe(
+      "depth" -> 4000.0,
+      "nonlinear" -> 1.0,
+      "start" -> 0.0,
+      "amp" -> 0.0,
+      "nx" -> 240.0,
+      "ny" -> 106.0,
+      "watchLon" -> -155.5,
+      "watchLat" -> 19.7,
+      "arrivalLevel" -> 0.01
+    ),
+    (nx, ny) =>
+      val (x, y) = cellOf(nx, ny, 143.0, 38.0)
+      Vector(Pulse("height", x, y, 2.0, 3.0))
+  )
+
+  val equatorial: ShallowPreset = ShallowPreset(
+    "Equatorial Kelvin wave",
+    "A bump on the equator of a rotating globe: the half that goes east stays at the equator " +
+      "(a Kelvin wave, at sqrt(g h) all the way round), the rest spreads out and curves",
+    globe(
+      "depth" -> 4000.0,
+      "nonlinear" -> 0.0,
+      "start" -> 0.0,
+      "amp" -> 0.0,
+      "nx" -> 240.0,
+      "ny" -> 106.0,
+      "watchLon" -> 180.0,
+      "watchLat" -> 0.0,
+      "arrivalLevel" -> 0.01
+    ),
+    (nx, ny) =>
+      val (x, y) = cellOf(nx, ny, 0.0, 0.0)
+      Vector(Pulse("height", x, y, 4.0, 1.0))
+  )
+
+  val rossbyHaurwitz: ShallowPreset = ShallowPreset(
+    "Rossby-Haurwitz wave",
+    "Williamson's test 6: a wave of wave number 4 that moves east through the westerlies " +
+      "(about 0.8 of the speed of the barotropic theory in this scheme)",
+    globe(
+      "depth" -> 8000.0,
+      "nonlinear" -> 1.0,
+      "start" -> 6.0,
+      "amp" -> 7.848,
+      "nx" -> 180.0,
+      "ny" -> 80.0,
+      "arrivalLevel" -> 0.0
+    ),
+    none
+  )
+
   val all: Vector[ShallowPreset] =
-    Vector(tsunami, adjustment, rossby, kelvin, harbour, beachRunup, harbourFlood)
+    Vector(
+      tsunami,
+      adjustment,
+      rossby,
+      kelvin,
+      harbour,
+      beachRunup,
+      harbourFlood,
+      pacific,
+      equatorial,
+      rossbyHaurwitz
+    )

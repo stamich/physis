@@ -16,7 +16,7 @@ class ShallowPresetsSuite extends munit.FunSuite:
     r
 
   test("every preset is valid for the schema and the stability guard") {
-    assertEquals(ShallowPresets.all.map(_.name).distinct.size, 7)
+    assertEquals(ShallowPresets.all.map(_.name).distinct.size, 10)
     ShallowPresets.all.foreach { preset =>
       val p = Shallow.params.fromValues(preset.params)
       assert(p.isRight, s"${preset.name}: $p")
@@ -140,4 +140,23 @@ class ShallowPresetsSuite extends munit.FunSuite:
     assert(s.land(94, 40), "island at 78% of the width")
     assert(s.eta(14, 30) > 0.9, s"front ${s.eta(14, 30)}")
     assertEquals(s.eta(66, 10), 0.0)
+  }
+
+  test("the three globe presets keep their volume, and the quake of the Pacific arrives") {
+    val globes = Seq(
+      ShallowPresets.pacific,
+      ShallowPresets.equatorial,
+      ShallowPresets.rossbyHaurwitz
+    )
+    for preset <- globes do
+      val r = build(preset)
+      r.step()
+      val before = r.state.volume
+      r.runSteps(300)
+      val scale = math.abs(before) + 1e13
+      assertEqualsDouble(r.state.volume, before, 1e-10 * scale, preset.name)
+    val r = build(ShallowPresets.pacific)
+    r.runSteps(200)
+    // Hawaii is 6 200 km from the source: not yet after 10 000 s (the waves cover 2 000 km)
+    assertEquals(Shallow.arrival.measure(r.state, 0.0), -1.0)
   }

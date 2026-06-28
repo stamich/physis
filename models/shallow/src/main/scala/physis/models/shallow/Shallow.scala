@@ -106,7 +106,7 @@ object ShallowParams:
       "depth",
       default = 4000.0,
       min = 1.0,
-      max = 7000.0,
+      max = 12000.0,
       unit = "m",
       doc = "Depth of the water at rest: waves travel at sqrt(g depth)"
     ),
@@ -1509,6 +1509,23 @@ object Shallow extends Model[ShallowParams]:
    */
   def waveWidth(p: ShallowParams): Double =
     math.max(math.sqrt(4.0 * p.depth * p.depth * p.depth / (3.0 * p.amp)), 5.0 * p.dx)
+
+  /**
+   * The rise of the sea floor, in m, that a quake of the magnitude `mw` is given in the Lab:
+   * `10^(mw/2 - 3.5)`, which is 1 m for a magnitude 7, 10 m for a 9 and 18 m for a 9.5, about
+   * half the mean slip of such quakes. The size of the rupture is the radius of the stroke.
+   */
+  def quakeUplift(mw: Double): Double = math.pow(10.0, 0.5 * mw - 3.5)
+
+  /**
+   * The longitude and latitude of the centre of the cell `(x, y)` of a globe of `nx` by `ny`
+   * cells between `latMax` south and north, for the read-out: `12.5°E 38.0°N`.
+   */
+  def lonLatText(nx: Int, ny: Int, latMax: Double, x: Int, y: Int): String =
+    val lon = -180.0 + (x + 0.5) * 360.0 / math.max(1, nx)
+    val lat = latMax - (y + 0.5) * 2.0 * latMax / math.max(1, ny)
+    f"${math.abs(lon)}%.1f°${if lon < 0.0 then "W" else "E"} " +
+      f"${math.abs(lat)}%.1f°${if lat < 0.0 then "S" else "N"}"
 
   /** The spacing of the meridians and parallels of the graticule, in degrees. */
   val GraticuleStep: Double = 30.0
