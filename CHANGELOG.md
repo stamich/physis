@@ -2,6 +2,93 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.11.0 — The sphere
+
+The shallow-water model runs on a rotating globe. With `geometry = 1` the grid is a longitude–latitude
+band, the Coriolis parameter is `2 Ω sin φ`, the full equations have the metric term, the volume is
+exact on cells of different areas, and a wave can go round the planet. With `geometry = 0` (the
+default) nothing changes: the plane runs the same code and its digests are the same as before.
+
+### Added
+
+- **fields**: `SphereGrid` (sizes, exact areas and face lengths of a longitude–latitude grid),
+  `SphereOps` (divergence in flux form, gradients, vorticity, outflow limiter, integral) and
+  `SphereAdvect` (the semi-Lagrangian step in the stretched index space).
+- **shallow**: parameters `geometry`, `radius`, `rotation`, `latMax`, `polar`, `watchLon`,
+  `watchLat` and `arrivalLevel`; flooding and the wet–dry scheme on the sphere too; starts 5
+  (Williamson's test 2, a steady zonal flow) and 6 (test 6, the Rossby–Haurwitz wave); the polar
+  filter; a stability check that uses the narrowest row (or the cells at `polar`) and refuses a run
+  it cannot keep stable; the probe `arrival` after the old ten; the slices `graticule` and
+  `arrival` in the state and in datasets; the views `map`, `arrivalMap` and `globe`;
+  [docs/sphere.md](docs/sphere.md).
+- **core, netcdf**: a `Raster` can know where it lies (`Raster.Extent`, `sampleAt(lon, lat)`, wrapping
+  round the globe); `NcRaster` reads regular `lat` and `lon` (or `latitude`, `longitude`);
+  `ExportSpec.Geo` and the CF axes `lon` and `lat` of a dataset.
+- **Lab**: presets **Pacific tsunami**, **Equatorial Kelvin wave** and **Rossby–Haurwitz wave**; the
+  **Quake** tool (a magnitude); strokes wrap round a globe; the read-out adds the longitude and
+  latitude of the cell.
+- **CLI**: datasets and `verify` of a globe; a `sweep` over `watchLon` with the probe `arrival` is
+  the table of arrival time against distance.
+- **tools**: `tools/shallow_sphere_reference.py`, an independent numpy implementation of the scheme.
+
+### Verified
+
+Numbers of the numpy reference, which the tolerances of the Scala tests are taken from (the tests
+check that the Scala model is inside the band, not the value it reaches):
+
+- A gravity wave on the equator travels at 1.0069 of `√(g h)` (Scala test: 0.98 – 1.03); after a trip
+  round the globe the energy is 1.0003 of its start and the volume drifts by 3·10⁻¹⁶.
+- Williamson 2, 180 × 80 cells: l2 error of the height 6.9·10⁻⁶ after one day and 6.3·10⁻⁶ after
+  five, volume drift 2·10⁻¹⁶ (Scala test: under 5·10⁻⁵ after one day); 90 × 40 cells: 2.8·10⁻⁵.
+- Williamson 6: the pattern moves east at 0.85, 0.83 and 0.82 of the barotropic theory on days 1, 2
+  and 3 (Scala test: 0.76 – 0.88 on day 3).
+- Polar filter at 1° resolution: a band to 85° is stable without it, a band to 88° blows up at step 6
+  without it and with `polar = 70` is stable (energy 0.998 of the start after 800 steps, volume
+  exact), and so is a band to 89°. The Scala tests run a band to 88° with `polar = 75` for 60 steps
+  and see the volume exact to 10⁻⁹.
+- Mass is exact to rounding on the sphere with and without the nonlinear terms and the filter; a sea
+  at rest stays at rest bit for bit; a dataset written by the Lab equals the one the command line
+  writes from the same manifest, and `verify` accepts it.
+- Speed on the CI runner (Linux, one thread): the nonlinear step on 360 × 160 cells 7.31 million
+  cell updates a second; a model day (1728 steps) 12.7 s, 12.8 s with the polar filter; for
+  comparison 8.05 million for the nonlinear plane on 256 × 256, 98.17 million for the linear one, and
+  0.12 ms for a step of the default sea.
+
+### Differences from the plan
+
+- **There are no true poles.** The band stops at `latMax` (80° by default, 89° at most) with a wall,
+  and the polar filter is a smoothing, not a treatment of the pole. This was proposed and agreed.
+- The step is fixed at 50 s; a run it cannot keep stable is refused with a message, there is no
+  smaller step chosen by the model.
+- "Global mass, energy and highest wave" were already probes (`mass`, `energy`, `max_height`); on the
+  sphere they are weighted by the area of the cells. `arrival` is the only new probe.
+- The graticule is a slice drawn as the flat grey overlay (as land is), every 30°, without labels;
+  the longitude and latitude are in the read-out under the pointer, which was added to the Lab's
+  model entry (`LabModel.locate`).
+- The Quake tool turns a magnitude into a rise of the sea floor, `10^(Mw/2 − 3.5)` m, and the radius
+  of the stroke is the size of the rupture. It is a rule of thumb for play, not a source model.
+- **The Pacific tsunami has no continents**; the repository has no sea floor of the world. The model
+  reads one by latitude and longitude, but the preset is a water world.
+- There is no extra "table" command: the arrival table is a `sweep` over `watchLon`, and the distance
+  is worked out by the reader.
+- Brushes and pulses are placed in the cells of the picture, not on the sphere (a pulse of the same
+  `sigma` is narrower in metres towards the edges).
+- The limits of the parameters grew: `depth` to 12 000 m, `amp` to 100, `start` to 6.
+
+### Not measured
+
+- How the Lab looks and feels with the map, the Quake tool and the read-out on a real display; the
+  Lab and view tests check what is drawn, not how it looks.
+- The values the Scala model reaches in the verification tests (the tests pass or fail inside a band;
+  the numbers above are the numpy reference's).
+- Long runs: energy and the Rossby–Haurwitz phase beyond three days, and the polar filter beyond the
+  60 steps of the Scala test (the numpy run is 800 steps).
+- A real sea floor: the tests read made-up files with coordinates (a GEBCO file has other variable
+  names, may be in other units and may be too large to read whole).
+- Any comparison with a global tsunami model, with measured arrival times or with observations;
+  the Hawaii point of the preset is a number in a water world, not a forecast.
+- Grids beyond 360 × 160, finer than 1°, and the speed on a machine other than the CI runners.
+
 ## 0.10.0 — Flooding and real sea floors
 
 The shallow-water sea can now come ashore. A sea floor rises above the level of the sea, a wave
