@@ -183,13 +183,18 @@ same animation. The model and its checks are described in [models/convection.md]
 physis-cli sweep --model shallow --param start=2 --param amp=0.1 --param depth=500 --param dx=50000 --param edges=0 --sweep beta=0,4e-11 --until 20000 --sample-every 1000
 physis-cli sweep --model shallow --param start=1 --sweep gravity=5,10 --until 3000 --sample-every 1000
 physis-cli animate harbour.png --model shallow --preset Harbour --steps 600 --every 20
+physis-cli export globe.nc --model shallow --param geometry=1 --param nx=72 --param ny=32 --param start=1 --param amp=1 --steps 40 --every 20
+physis-cli verify globe.nc
 ```
 
 The first command runs a Rossby wave (the settings of the preset of that name) with and without `β`; the second scans gravity, which sets
 the wave speed. The third animates the harbour: the wave front, the breakwater and the island are
 ordinary strokes in the manifest, which replays to the same digest and the same animation. The
 `sweep` over `nx` or `ny` with a painted preset is refused, as for the fluid. The model and its
-checks are described in [models/shallow.md](models/shallow.md).
+checks are described in [models/shallow.md](models/shallow.md). The fourth command writes a dataset
+of a globe, with `lon` and `lat` axes, and the fifth replays it and compares it bit for bit; a
+sweep over `watchLon` with the probe `arrival` is the table of arrival times in
+[sphere.md](sphere.md).
 
 ## Replay
 
