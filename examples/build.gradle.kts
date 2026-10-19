@@ -10,6 +10,8 @@ dependencies {
     implementation(project(":models:pendulum"))
     implementation(project(":models:grayscott"))
     implementation(project(":models:boids"))
+    implementation(project(":models:wave"))
+    implementation(project(":models:physarum"))
 }
 
 application {

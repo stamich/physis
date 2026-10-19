@@ -17,6 +17,25 @@ class CatalogSuite extends munit.FunSuite:
       assertEquals(session.schema.names.toSet, session.initial.keySet)
   }
 
+  test("Physarum offers food and trail tools whose strokes the model accepts") {
+    import physis.core.run.{Intervention, Physis}
+    import physis.models.physarum.Physarum
+    assertEquals(
+      Catalog.physarum.tools.map(_.spec.name),
+      Vector("Paint food", "Erase food", "Paint trail")
+    )
+    assert(Catalog.physarum.wraps(Map.empty))
+    val run = Physis
+      .model(Physarum)
+      .stepping(Physarum.stepping)
+      .overrides(Map("n" -> 50.0, "nx" -> 64.0, "ny" -> 64.0))
+      .build()
+    for tool <- Catalog.physarum.tools; secondary <- Seq(false, true) do
+      val iv = tool.make(physis.view.Dab(10.0, 12.0), 5.0, 3.0, secondary)
+      assert(run.intervene(iv).isRight, s"${tool.spec.name}: $iv")
+      assert(iv.isInstanceOf[Intervention.Brush])
+  }
+
   test("the Lorenz view stacks the attractor above the coordinates") {
     Catalog.lorenz.open(1L, startPaused = true).view match
       case View.Layout(Seq(_: View.Trajectory, _: View.Plot), Direction.Vertical) => ()
@@ -54,6 +73,7 @@ class LabWindowSuite extends LabSuite:
           Catalog.grayScott.id,
           Catalog.wave.id,
           Catalog.boids.id,
+          Catalog.physarum.id,
           Catalog.pendulum.id
         )
       do
@@ -186,6 +206,44 @@ class LabWindowSuite extends LabSuite:
       LabFx.onFx(window.panel.get.applyButton.fire())
       LabFx.await("300 boids")(latest(window)(_.stateSize == 4 * 300))
       assertEquals(LabFx.onFx(window.panel.get.pendingRestart), Map.empty[String, Double])
+    }
+  }
+
+  fxTest("Save image writes the field as the Lab draws it, with a colour scale and no text") {
+    withWindow(Catalog.grayScott.id) { window =>
+      LabFx.await("frames")(latest(window)(_.step > 100))
+      val file = java.nio.file.Files.createTempFile("physis-lab-image", ".png")
+      try
+        val (pixels, size, range, result) = LabFx.onFx {
+          val h = window.heatmaps.head
+          (h.lastPixels.clone(), h.gridSize, h.range, window.saveImage(file, 2))
+        }
+        val (nx, ny) = size
+        assert(result.exists(_.contains(file.getFileName.toString)), result.toString)
+        assertEquals(LabFx.onFx(window.status.getText), result.fold(identity, identity))
+        val image = javax.imageio.ImageIO.read(file.toFile)
+        assertEquals(image.getHeight, ny * 2)
+        assert(image.getWidth > nx * 2, s"no colour scale: ${image.getWidth} wide")
+        for y <- 0 until ny * 2; x <- 0 until nx * 2 do
+          assertEquals(image.getRGB(x, y), pixels((y / 2) * nx + x / 2) | 0xff000000, s"($x, $y)")
+        assert(result.exists(_.contains("colours from")), result.toString)
+        assert(range._1 < range._2 || range._1 == range._2)
+        assert(LabFx.onFx(window.saveImage(file, 0)).isLeft)
+        assert(LabFx.onFx(window.saveImage(file, 9)).isLeft)
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("Save image says so when the view has no image") {
+    withWindow(Catalog.lorenz.id) { window =>
+      val file = java.nio.file.Files.createTempFile("physis-lab-image", ".png")
+      try
+        val result = LabFx.onFx(window.saveImage(file, 1))
+        assertEquals(result, Left("this model has no image to save"))
+        assertEquals(LabFx.onFx(window.status.getText), "this model has no image to save")
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
     }
   }
 

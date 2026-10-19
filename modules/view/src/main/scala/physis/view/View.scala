@@ -76,8 +76,32 @@ enum View:
       title: String = ""
   )
 
+  /**
+   * A heatmap with the agents of the model drawn over it as dots, one cell each, in the cells
+   * they stand in. Agent positions are in cell coordinates of the heatmap and wrap at the
+   * border, so an agent at the seam is drawn on the other side, as the grid is periodic.
+   * Strokes and the read-out work on the heatmap as before.
+   */
+  case Layers(base: Heatmap, dots: Dots)
+
   /** Several views side by side or stacked; the host lays them out with equal shares. */
   case Layout(views: Seq[View], direction: Direction = Direction.Horizontal)
+
+/**
+ * The dots of a [[View.Layers]]: where the agents are and how they are drawn.
+ *
+ * @param x       slice with the x positions, in cells of the heatmap
+ * @param y       slice with the y positions, in cells of the heatmap
+ * @param color   packed ARGB colour of a dot (its alpha is ignored; see `opacity`)
+ * @param opacity how much of the dot's colour is mixed into the cell, 0 to 255
+ */
+final case class Dots(
+    x: String = "x",
+    y: String = "y",
+    color: Int = 0xffffffff,
+    opacity: Int = 96
+):
+  require(opacity >= 0 && opacity <= 255, s"opacity must be 0 to 255, got $opacity")
 
 /** What a trajectory's colour encodes. */
 enum TrailColor:
