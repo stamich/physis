@@ -2,6 +2,10 @@ plugins {
     id("physis.scala-conventions")
 }
 
+dependencies {
+    testImplementation(project(":verify"))
+}
+
 description = "Physis simulation core: models, stepping, parameters, runs and manifests."
 
 // physis.core.BuildInfo: framework version and source revision, recorded in run manifests.

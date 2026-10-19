@@ -7,4 +7,5 @@ description = "Physis FX: JavaFX/ScalaFX renderers, render loop and generated pa
 dependencies {
     api(project(":core"))
     api(project(":view"))
+    testImplementation(project(":models:grayscott"))
 }

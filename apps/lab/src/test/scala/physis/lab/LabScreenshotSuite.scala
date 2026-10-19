@@ -32,9 +32,16 @@ class LabScreenshotSuite extends LabSuite:
       (stage, scene)
     }
     try
-      for (model, seconds) <- Seq(Catalog.lorenz -> 15.0, Catalog.pendulum -> 8.0) do
+      val shots = Seq(
+        Catalog.lorenz -> 15.0,
+        Catalog.pendulum -> 8.0,
+        Catalog.grayScott -> 4000.0, // time is measured in steps
+        Catalog.boids -> 10.0
+      )
+      for (model, seconds) <- shots do
         LabFx.onFx(window.open(model.id))
-        LabFx.await(s"${model.id} ran ${seconds}s", timeoutMs = 60_000)(
+        if model eq Catalog.grayScott then LabFx.onFx(window.applyPreset("Coral"))
+        LabFx.await(s"${model.id} reached time $seconds", timeoutMs = 60_000)(
           LabFx.onFx(window.loop.flatMap(_.snapshot).exists(_.time >= seconds))
         )
         val file = Path.of("build", "screenshots", s"lab-${model.id}.png")

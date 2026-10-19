@@ -1,6 +1,6 @@
 # Physis Lab
 
-Physis Lab is the desktop app of Physis 0.2: it runs a model live, draws it every frame and
+Physis Lab is the desktop app of Physis: it runs a model live, draws it every frame and
 lets you change parameters while it runs. Sessions are reproducible: a session saved as a
 manifest replays headless, bit for bit.
 
@@ -20,9 +20,9 @@ for the current platform (Linux, macOS, Windows; x64 and arm64) by the build.
 
 | Area | Contents |
 | --- | --- |
-| Left | model picker, parameter panel, run controls |
-| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift) |
-| Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; status messages |
+| Left | model picker, presets, parameter panel, seed field, run controls |
+| Centre | the model's views (Lorenz: attractor above coordinates; pendulum: mechanism beside energy drift; Gray–Scott: u and v heatmaps above a statistics plot; Boids: the flock above its polarization) |
+| Bottom | statistics: fps, p99 frame time, steps/s, simulated time, rejected steps, speed, state; the value of the heatmap cell under the pointer; status messages |
 | Menu | File → Save manifest…, Replay manifest…, Close |
 
 The parameter panel is generated from the model's `ParamSchema`: a slider plus an exact-value
@@ -33,6 +33,18 @@ name, the documentation as a tooltip. Invalid input is outlined red and not sent
 Changes take effect from the next simulation step, without a restart. All changes made during
 one frame are sent together, so dragging a slider sends at most one change per frame.
 
+## Presets, seed and restart-only parameters
+
+Models with named regimes show a **Preset** drop-down. Choosing a preset sets all its parameters
+in one change, which is one event in the manifest.
+
+Models with randomness show a **Seed** field and a **Reseed** button: the run starts again with
+that seed and the parameters it has now.
+
+Parameters that change the size of the state (grid size, number of boids, noise of the initial
+seed) are marked with a star. Editing them does not touch the run; **Apply and restart** starts
+a new run with the edited values, and Reset (R) discards them.
+
 ## Controls
 
 | Action | Control | Key |
@@ -40,7 +52,7 @@ one frame are sent together, so dragging a slider sends at most one change per f
 | Pause / resume | Pause / Play | Space |
 | One step (while paused) | Step | Right arrow |
 | Restart from the initial state | Reset | R |
-| Faster / slower (0.01x to 100x simulated seconds per second) | Speed slider | + / − |
+| Faster / slower (the range depends on the model: 0.01x to 100x for the ODE models, 10 to 4 000 steps/s for Gray–Scott, 0.1x to 20x for Boids) | Speed slider | + / − |
 | Rotate a 3D view | drag | |
 | Zoom | scroll | |
 | Default orientation and zoom | double-click | |
@@ -78,12 +90,18 @@ final digest matches the recorded one. The same manifest replays with the comman
 ## Adding a model to the Lab
 
 1. Describe its views next to the model with `physis-view` (no JavaFX): `View.Trajectory`,
-   `View.Plot`, `View.Scene2D` and `View.Layout`, reading `Channel.StateAt` / `Channel.ProbeAt`
-   (see `LorenzViews` and `PendulumViews`).
-2. Add an entry to `apps/lab/.../Catalog.scala` with the parameters, stepping, probes and
-   default view, and the model to `Catalog.registry`.
+   `View.Plot`, `View.Scene2D`, `View.Heatmap`, `View.Particles` and `View.Layout`, reading
+   `Channel.StateAt` / `Channel.ProbeAt` or snapshot slices by name (see `LorenzViews`,
+   `PendulumViews`, `GrayScottViews` and `BoidsViews`).
+2. Add an entry to `apps/lab/.../Catalog.scala` with the parameters, stepping, probes, default
+   view, presets and speed range (`OdeEntry` for ODE models, `ModelEntry` for the others), and
+   the model to `Catalog.registry`.
 
 ## Performance
+
+Heatmaps write their pixels into an int array that a JavaFX `PixelBuffer` wraps, so a frame of a
+256 × 256 field is one pass over 65 536 cells (under 1 ms, checked by a `slowTest`) and one
+buffer update. Particles are drawn in 16 heading bands, one path and one fill per band.
 
 Trails are drawn in 32 colour bands, one canvas path per band, so a 20 000-point trail costs 32
 stroke calls; preparing those paths takes well under 4 ms (checked by a `slowTest`). The target

@@ -3,13 +3,15 @@
 [![CI](https://github.com/stamich/physis/actions/workflows/ci.yml/badge.svg)](https://github.com/stamich/physis/actions/workflows/ci.yml)
 
 Physis (Greek *φύσις*, "nature") is a Scala 3 framework for simulating models of natural
-phenomena — ODE systems now, numerical fields and agent-based models next — with verified
-numerics and reproducible runs.
+phenomena — ODE systems, numerical fields and agent-based models — with verified numerics and
+reproducible runs.
 
 Milestone 0.1 delivered the headless simulation core and ODE support, proven on two reference
 models: the Lorenz attractor and the double pendulum. Milestone 0.2 adds **Physis Lab**, a
 ScalaFX desktop app that runs a model live, draws it every frame and lets you change parameters
-while it runs, with sessions that replay bit for bit.
+while it runs, with sessions that replay bit for bit. Milestone 0.3 adds **fields and agents**:
+2D grids with stencils and boundaries, a cell list for neighbour search, and two models on top of
+them, Gray–Scott reaction–diffusion and Boids, both live in the Lab.
 
 ## Modules
 
@@ -20,6 +22,9 @@ while it runs, with sessions that replay bit for bit.
 | `modules/verify` | convergence order, conservation, determinism and allocation checks |
 | `models/lorenz` | Lorenz system, golden values from a 40-digit reference integration |
 | `models/pendulum` | double pendulum with energy probes |
+| `modules/fields` | `Grid2D`, `Field2D`, boundaries, 5- and 9-point Laplacians, `ParticleSet`, `NeighborGrid` |
+| `models/grayscott` | Gray–Scott reaction–diffusion with Pearson's regimes as presets |
+| `models/boids` | Boids and the Vicsek model on a periodic world |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -37,11 +42,15 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz and the double pendulum, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott and Boids, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
 ./gradlew :examples:run --args="--model lorenz --until 20 --sample-every 0.05"
+
+# Gray–Scott on 64 x 64 and Boids as CSV: a first look without a window
+./gradlew :examples:run --args="--model gray-scott --param nx=64 --param ny=64 --until 3000 --sample-every 500"
+./gradlew :examples:run --args="--model boids --param n=500 --until 10 --sample-every 1"
 
 # Chaotic double pendulum with adaptive steps; save the manifest, then replay it
 ./gradlew :examples:run --args="--model double-pendulum --adaptive 1e-9 --until 10 --manifest run.json"
@@ -86,7 +95,14 @@ Every model ships with tests that check the numerics, not only the code:
 - **Reproducibility** — a run is defined by its manifest (model version, parameters, stepping,
   seed); replaying it gives a bit-identical final state.
 
-See [docs/models](docs/models) for the equations, integrators and checks of each model.
+- **Fields** — the stencils converge at their order, diffusion decays Fourier modes at the
+  analytic rate, and Gray–Scott on 64 × 64 agrees with an independent numpy implementation to
+  1e-10 (`tools/gray_scott_reference.py`).
+- **Agents** — the cell list returns exactly the brute-force neighbours, and Boids show the
+  Vicsek order–disorder transition (`tools/boids_reference.py`).
+
+See [docs/models](docs/models) for the equations, integrators and checks of each model, and
+[docs/fields.md](docs/fields.md) for grids and agents.
 
 ## Design rules
 

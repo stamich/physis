@@ -29,3 +29,16 @@ object Convergence:
   /** True if `error` is at most `factor` times the tolerance requested from an adaptive solver. */
   def withinTolerance(error: Double, tolerance: Double, factor: Double = 10.0): Boolean =
     error <= factor * tolerance
+
+  /**
+   * True if the observed order lies within `tolerance` of `expected`, for example 2.0 +- 0.1 for
+   * a second-order stencil. A scheme of the wrong order (a first-order one passed off as second
+   * order) fails.
+   */
+  def hasOrder(
+      steps: Seq[Double],
+      errors: Seq[Double],
+      expected: Double,
+      tolerance: Double = 0.1
+  ): Boolean =
+    math.abs(observedOrder(steps, errors) - expected) <= tolerance

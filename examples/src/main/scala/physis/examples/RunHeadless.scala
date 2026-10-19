@@ -6,6 +6,8 @@ import java.nio.file.{Files, Path}
 
 import physis.core.{Model, Probe, Stepping}
 import physis.core.run.{Manifest, Physis}
+import physis.models.boids.{Boids, BoidsParams, BoidsState}
+import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState}
 import physis.models.lorenz.{Lorenz, LorenzParams}
 import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.ode.OdeState
@@ -17,6 +19,8 @@ import physis.ode.OdeState
  * ./gradlew :examples:run --args="--model lorenz --until 20 --sample-every 0.05"
  * ./gradlew :examples:run --args="--model double-pendulum --param theta1=90 --adaptive 1e-9 --manifest run.json"
  * ./gradlew :examples:run --args="--replay run.json"
+ * ./gradlew :examples:run --args="--model gray-scott --param nx=64 --param ny=64 --until 3000 --sample-every 500"
+ * ./gradlew :examples:run --args="--model boids --param n=500 --until 10 --sample-every 1"
  * }}}
  *
  * A summary with the final state digest goes to standard error; a replay of a manifest prints
@@ -26,11 +30,12 @@ object RunHeadless:
 
   val Usage: String =
     """Usage: RunHeadless [options]
-      |  --model <id>           lorenz | double-pendulum (default: lorenz)
+      |  --model <id>           lorenz | double-pendulum | gray-scott | boids (default: lorenz)
       |  --param <name=value>   override a model parameter (repeatable)
       |  --until <t>            end time (default: 10)
       |  --sample-every <dt>    probe sampling interval (default: 0.1)
-      |  --dt <dt>              fixed RK4 step (default: 0.001)
+      |  --dt <dt>              fixed step (default: the model's own: 0.001 for the ODE models,
+      |                         1 for gray-scott, 1/60 for boids)
       |  --adaptive <tol>       Dormand-Prince with rtol = atol = tol instead of fixed steps
       |  --seed <n>             run seed (default: 0)
       |  --manifest <path>      write the run manifest to <path>
@@ -42,30 +47,42 @@ object RunHeadless:
       params: Map[String, Double] = Map.empty,
       until: Double = 10.0,
       sampleEvery: Double = 0.1,
-      dt: Double = 0.001,
+      dt: Option[Double] = None,
       adaptiveTolerance: Option[Double] = None,
       seed: Long = 0L,
       manifest: Option[Path] = None,
       replay: Option[Path] = None,
       exactStepping: Option[Stepping] = None
   ):
-    /** Stepping from a manifest when replaying, otherwise from --dt / --adaptive. */
-    def stepping: Stepping = exactStepping.getOrElse(
+    /**
+     * Stepping from a manifest when replaying, otherwise from --adaptive or --dt, otherwise the
+     * model's own `default`.
+     */
+    def steppingFor(default: Stepping): Stepping = exactStepping.getOrElse(
       adaptiveTolerance match
         case Some(tol) =>
           Stepping.Adaptive(tol, tol, initialDt = math.min(1e-3, sampleEvery), maxDt = sampleEvery)
-        case None => Stepping.Fixed(dt)
+        case None => dt.map(Stepping.Fixed(_)).getOrElse(default)
     )
 
-  /** A model this example can run, with the probes it prints. */
-  private final case class Entry[P](
-      model: Model.Aux[P, OdeState],
-      probes: P => Vector[Probe[OdeState]]
+  /** A model this example can run, with the probes it prints and the step it is meant for. */
+  private final case class Entry[P, S](
+      model: Model.Aux[P, S],
+      probes: P => Vector[Probe[S]],
+      stepping: Stepping
   )
 
-  private val catalog: Map[String, Entry[?]] = Map(
-    Lorenz.Id -> Entry[LorenzParams](Lorenz.model, _ => Lorenz.probes),
-    Pendulum.Id -> Entry[PendulumParams](Pendulum.model, Pendulum.probes)
+  private val ode: Stepping = Stepping.Fixed(0.001)
+
+  private val catalog: Map[String, Entry[?, ?]] = Map(
+    Lorenz.Id -> Entry[LorenzParams, OdeState](Lorenz.model, _ => Lorenz.probes, ode),
+    Pendulum.Id -> Entry[PendulumParams, OdeState](Pendulum.model, Pendulum.probes, ode),
+    GrayScott.id -> Entry[GrayScottParams, GrayScottState](
+      GrayScott,
+      _ => GrayScott.probes,
+      GrayScott.stepping
+    ),
+    Boids.id -> Entry[BoidsParams, BoidsState](Boids, _ => Boids.probes, Boids.stepping)
   )
 
   def main(args: Array[String]): Unit =
@@ -98,7 +115,7 @@ object RunHeadless:
       case "--sample-every" :: v :: rest =>
         number(v, "--sample-every").flatMap(d => parse(rest, options.copy(sampleEvery = d)))
       case "--dt" :: v :: rest =>
-        number(v, "--dt").flatMap(d => parse(rest, options.copy(dt = d)))
+        number(v, "--dt").flatMap(d => parse(rest, options.copy(dt = Some(d))))
       case "--adaptive" :: v :: rest =>
         number(v, "--adaptive").flatMap(d => parse(rest, options.copy(adaptiveTolerance = Some(d))))
       case "--seed" :: v :: rest =>
@@ -148,10 +165,10 @@ object RunHeadless:
     catalog.get(o.model) match
       case None =>
         Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
-      case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any]], o, out, err)
+      case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any, Any]], o, out, err)
 
   private def executeEntry(
-      entry: Entry[Any],
+      entry: Entry[Any, Any],
       o: Options,
       out: PrintStream,
       err: PrintStream
@@ -162,7 +179,7 @@ object RunHeadless:
         val run = Physis
           .model(entry.model)
           .withParams(p)
-          .stepping(o.stepping)
+          .stepping(o.steppingFor(entry.stepping))
           .seed(o.seed)
           .sampleEvery(o.sampleEvery)
           .probe(entry.probes(p)*)

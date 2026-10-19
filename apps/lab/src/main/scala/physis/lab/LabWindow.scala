@@ -22,12 +22,16 @@ import javafx.scene.layout.{
 import physis.core.live.Command
 import physis.fx.{
   Fx,
+  HeatmapRenderer,
   ParamPanel,
+  ParticlesRenderer,
+  PresetPicker,
   PlotRenderer,
   RenderLoop,
   Renderer,
   RunControls,
   SceneRenderer,
+  SeedBar,
   StatsOverlay,
   Theme,
   TrajectoryRenderer
@@ -68,7 +72,12 @@ final class LabWindow(
   status.setTextFill(Theme.Text)
   status.setPadding(new Insets(4, 8, 4, 8))
 
-  private val bottom = new HBox(16, overlay.node, status)
+  /** The value of the heatmap cell under the pointer, e.g. `v[12, 40] = 0.2481`. */
+  val cell: Label = new Label("")
+  cell.setTextFill(Theme.Text)
+  cell.setPadding(new Insets(4, 8, 4, 8))
+
+  private val bottom = new HBox(16, overlay.node, cell, status)
   bottom.setAlignment(Pos.CENTER_LEFT)
   root.setLeft(side)
   root.setBottom(bottom)
@@ -152,27 +161,89 @@ final class LabWindow(
     val session = model.open(seed, startPaused)
     val (viewNode, renderers) = LabWindow.build(session.view)
     val loop = new RenderLoop(session.live, renderers, Some(overlay))
-    val panel = new ParamPanel(session.schema, session.initial, loop.setParam)
-    val controls = new RunControls(session.live.send)
+    val panel = new ParamPanel(
+      session.schema,
+      session.initial,
+      loop.setParam,
+      values => session.live.send(Command.Restart(currentParams() ++ values, None))
+    )
+    val controls = new RunControls(
+      session.live.send,
+      session.speedRange.default,
+      (session.speedRange.min, session.speedRange.max),
+      session.speedRange.text
+    )
+    for case h: HeatmapRenderer <- renderers do
+      h.onCell = c => cell.setText(c.fold("")(_.text(h.sliceName)))
     var lastStep = -1L
+    var lastParams: AnyRef = null
     loop.onFrame { _ =>
       loop.snapshot.foreach { s =>
         controls.refresh(s)
-        // after a reset the run is back at its initial parameters: show them
-        if s.step < lastStep then panel.refresh(s)
+        // after a reset or a restart the run is back at its initial parameters: show them
+        if s.step < lastStep then
+          panel.discardEdits()
+          panel.refresh(s)
+        // a preset or a restart changed the parameters from outside the panel
+        else if s.paramValues ne lastParams then panel.refresh(s)
+        lastParams = s.paramValues
         lastStep = s.step
       }
     }
     val scroll = new ScrollPane(panel.node)
     scroll.setFitToWidth(true)
     VBox.setVgrow(scroll, Priority.ALWAYS)
-    side.getChildren.setAll(new Label("Model"), picker, scroll, controls.node)
+    val parts = Vector.newBuilder[Node]
+    parts += new Label("Model")
+    parts += picker
+    if session.presets.nonEmpty then
+      val presetPicker = new PresetPicker(session.presets, p => applyPreset(p.name))
+      parts += presetPicker.node
+    parts += scroll
+    if session.usesSeed then parts += new SeedBar(seed, s => reseed(s)).node
+    parts += controls.node
+    side.getChildren.setAll(parts.result()*)
     root.setCenter(viewNode)
-    running = Some(LabWindow.Running(session, loop, panel, controls))
+    running = Some(LabWindow.Running(
+      session,
+      loop,
+      panel,
+      controls,
+      renderers.collect {
+        case h: HeatmapRenderer => h
+      }
+    ))
     picker.getSelectionModel.select(models.indexOf(model))
     status.setText("")
+    cell.setText("")
     session.live.start()
     loop.start()
+
+  /** Applies the preset called `name` of the current model as one parameter change. */
+  def applyPreset(name: String): Unit =
+    for r <- running; preset <- r.session.presets.find(_.name == name) do
+      r.session.live.send(Command.SetParams(preset.values))
+
+  /** Starts the current run again with `newSeed`; the parameters stay as they are. */
+  def reseed(newSeed: Long): Unit =
+    for r <- running do r.session.live.send(Command.Restart(currentParams(), Some(newSeed)))
+
+  /**
+   * The parameters of the running session as they are now. A restart rebuilds the run from its
+   * initial parameters, so the Lab passes these along to keep the preset and the slider
+   * positions the user has chosen.
+   */
+  private def currentParams(): Map[String, Double] =
+    running
+      .flatMap(_.loop.snapshot)
+      .map(s => s.paramNames.zip(s.paramValues).toMap)
+      .getOrElse(Map.empty)
+
+  /** The heatmap renderers of the current session. */
+  def heatmaps: Seq[HeatmapRenderer] = running.toSeq.flatMap(_.heatmaps)
+
+  /** The current parameter panel, if any. */
+  def panel: Option[ParamPanel] = running.map(_.panel)
 
   /** Stops the current session's render loop and simulation thread. */
   def close(): Unit =
@@ -216,7 +287,8 @@ object LabWindow:
       session: LabSession,
       loop: RenderLoop,
       panel: ParamPanel,
-      controls: RunControls
+      controls: RunControls,
+      heatmaps: Seq[HeatmapRenderer]
   )
 
   /** The node for a view and the renderers inside it; layouts split their area equally. */
@@ -229,6 +301,12 @@ object LabWindow:
       (r.node, Seq(r))
     case v: View.Scene2D =>
       val r = new SceneRenderer(v)
+      (r.node, Seq(r))
+    case v: View.Heatmap =>
+      val r = new HeatmapRenderer(v)
+      (r.node, Seq(r))
+    case v: View.Particles =>
+      val r = new ParticlesRenderer(v)
       (r.node, Seq(r))
     case View.Layout(views, direction) =>
       val parts = views.map(build)

@@ -33,6 +33,46 @@ enum View:
    */
   case Scene2D(bounds: Bounds, draw: SceneInput => Seq[Shape], trail: Option[TrailSpec] = None)
 
+  /**
+   * A scalar field, one slice of the exported state, as a colour-mapped image (row 0 on top),
+   * with a colour bar and a read-out of the cell under the pointer.
+   *
+   * @param slice    name of the snapshot slice that holds the field
+   * @param range    which values get the first and the last colour
+   * @param colormap colours
+   * @param title    shown above the image; empty for none
+   */
+  case Heatmap(
+      slice: String,
+      range: ValueRange = ValueRange.Auto,
+      colormap: Colormap = Colormap.Viridis,
+      title: String = ""
+  )
+
+  /**
+   * Particles in a periodic world, one triangle per particle pointing along its velocity and
+   * coloured by heading (the world is `0..width` by `0..height`, y up, read from parameters).
+   *
+   * @param x           slice with the x positions
+   * @param y           slice with the y positions
+   * @param vx          slice with the x velocities
+   * @param vy          slice with the y velocities
+   * @param widthParam  name of the parameter holding the world width
+   * @param heightParam name of the parameter holding the world height
+   * @param colormap    colours of the heading (a cyclic map fits)
+   * @param title       shown above the world; empty for none
+   */
+  case Particles(
+      x: String = "x",
+      y: String = "y",
+      vx: String = "vx",
+      vy: String = "vy",
+      widthParam: String = "width",
+      heightParam: String = "height",
+      colormap: Colormap = Colormap.Cyclic,
+      title: String = ""
+  )
+
   /** Several views side by side or stacked; the host lays them out with equal shares. */
   case Layout(views: Seq[View], direction: Direction = Direction.Horizontal)
 

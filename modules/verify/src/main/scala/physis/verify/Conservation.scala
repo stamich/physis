@@ -32,3 +32,13 @@ object Conservation:
     val first = maxDeviation(0)
     val last = maxDeviation(windows - 1)
     if first == 0.0 then last == 0.0 else last <= factor * first
+
+  /**
+   * True if the series never increases by more than `slack` between neighbours: a quantity that
+   * must only decay (the total of a field with Dirichlet boundaries under diffusion).
+   */
+  def nonIncreasing(series: Seq[Double], slack: Double = 0.0): Boolean =
+    series.sliding(2).forall {
+      case Seq(a, b) => b <= a + slack
+      case _ => true
+    }

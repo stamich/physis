@@ -9,6 +9,8 @@ dependencies {
     implementation(project(":fx"))
     implementation(project(":models:lorenz"))
     implementation(project(":models:pendulum"))
+    implementation(project(":models:grayscott"))
+    implementation(project(":models:boids"))
 }
 
 application {
