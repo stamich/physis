@@ -34,12 +34,14 @@ private[run] object Json:
     try
       val value = parser.value()
       parser.skipWhitespace()
-      if parser.atEnd then Right(value) else Left(s"unexpected trailing content at offset ${parser.offset}")
+      if parser.atEnd then Right(value)
+      else Left(s"unexpected trailing content at offset ${parser.offset}")
     catch case e: ParseError => Left(e.getMessage)
 
   extension (json: Json)
     def field(name: String): Either[String, Json] = json match
-      case JObj(fields) => fields.collectFirst { case (`name`, v) => v }.toRight(s"missing field '$name'")
+      case JObj(fields) =>
+        fields.collectFirst { case (`name`, v) => v }.toRight(s"missing field '$name'")
       case _ => Left(s"expected an object with field '$name'")
 
     def asString: Either[String, String] = json match

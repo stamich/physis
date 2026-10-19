@@ -25,12 +25,11 @@ dependencies {
 }
 
 tasks.withType<ScalaCompile>().configureEach {
+    // Gradle already passes -deprecation and -unchecked (scalaCompileOptions defaults);
+    // repeating them is a warning, which -Werror turns into an error. Scala 3 reads UTF-8.
     scalaCompileOptions.additionalParameters = listOf(
         "-release", javaRelease.toString(),
-        "-encoding", "UTF-8",
-        "-deprecation",
         "-feature",
-        "-unchecked",
         "-Werror",
         // Parameters are excluded on purpose: numerical interfaces are full of
         // implementations that legitimately ignore an argument (time, rng, ...).

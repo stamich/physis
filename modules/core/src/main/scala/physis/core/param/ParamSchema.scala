@@ -121,11 +121,16 @@ object ParamSchema:
    *   )
    * }}}
    */
-  inline def derived[P <: Product](specs: ParamSpec*)(using m: Mirror.ProductOf[P]): ParamSchema[P] =
-    val labels = constValueTuple[m.MirroredElemLabels].toList.map(_.toString)
-    val codecs = summonAll[Tuple.Map[m.MirroredElemTypes, ParamCodec]].toList
-      .map(_.asInstanceOf[ParamCodec[Any]])
-    fromMirror[P](labels.toVector, codecs.toVector, specs.toVector, m)
+  inline def derived[P <: Product](specs: ParamSpec*)(using
+      m: Mirror.ProductOf[P]
+  ): ParamSchema[P] =
+    val labels: Vector[String] =
+      constValueTuple[m.MirroredElemLabels].productIterator.map(_.toString).toVector
+    val codecs: Vector[ParamCodec[Any]] =
+      summonAll[Tuple.Map[m.MirroredElemTypes, ParamCodec]].productIterator
+        .map(_.asInstanceOf[ParamCodec[Any]])
+        .toVector
+    fromMirror[P](labels, codecs, specs.toVector, m)
 
   /**
    * Builds a schema from field labels and codecs extracted by [[derived]]. Public because inline

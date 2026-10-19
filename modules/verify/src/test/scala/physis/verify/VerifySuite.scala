@@ -22,7 +22,11 @@ class VerifySuite extends munit.FunSuite:
 
   test("observedOrder recovers a known power law") {
     val steps = Seq(0.1, 0.05, 0.025, 0.0125)
-    assertEqualsDouble(Convergence.observedOrder(steps, steps.map(h => 3.0 * math.pow(h, 4))), 4.0, 1e-12)
+    assertEqualsDouble(
+      Convergence.observedOrder(steps, steps.map(h => 3.0 * math.pow(h, 4))),
+      4.0,
+      1e-12
+    )
     assertEqualsDouble(Convergence.observedOrder(steps, steps.map(h => 0.5 * h * h)), 2.0, 1e-12)
   }
 

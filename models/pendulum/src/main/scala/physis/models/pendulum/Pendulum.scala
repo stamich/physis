@@ -31,10 +31,38 @@ object PendulumParams:
     ParamSpec("l1", default = 1.0, min = 1e-6, max = 1e6, unit = "m", doc = "Inner rod length"),
     ParamSpec("l2", default = 1.0, min = 1e-6, max = 1e6, unit = "m", doc = "Outer rod length"),
     ParamSpec("g", default = 9.81, min = 0.0, max = 1e3, unit = "m/s^2", doc = "Gravity"),
-    ParamSpec("theta1", default = 120.0, min = -360.0, max = 360.0, unit = "deg", doc = "Inner angle"),
-    ParamSpec("theta2", default = -10.0, min = -360.0, max = 360.0, unit = "deg", doc = "Outer angle"),
-    ParamSpec("omega1", default = 0.0, min = -1e3, max = 1e3, unit = "rad/s", doc = "Inner velocity"),
-    ParamSpec("omega2", default = 0.0, min = -1e3, max = 1e3, unit = "rad/s", doc = "Outer velocity")
+    ParamSpec(
+      "theta1",
+      default = 120.0,
+      min = -360.0,
+      max = 360.0,
+      unit = "deg",
+      doc = "Inner angle"
+    ),
+    ParamSpec(
+      "theta2",
+      default = -10.0,
+      min = -360.0,
+      max = 360.0,
+      unit = "deg",
+      doc = "Outer angle"
+    ),
+    ParamSpec(
+      "omega1",
+      default = 0.0,
+      min = -1e3,
+      max = 1e3,
+      unit = "rad/s",
+      doc = "Inner velocity"
+    ),
+    ParamSpec(
+      "omega2",
+      default = 0.0,
+      min = -1e3,
+      max = 1e3,
+      unit = "rad/s",
+      doc = "Outer velocity"
+    )
   )
 
   /** Chaotic default: 120 deg / -10 deg at rest. */

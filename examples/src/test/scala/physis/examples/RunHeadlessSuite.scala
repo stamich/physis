@@ -30,7 +30,16 @@ class RunHeadlessSuite extends munit.FunSuite:
 
   test("parameters are overridden by name") {
     val (code, csv, _) =
-      capture("--model", "double-pendulum", "--param", "theta1=0", "--param", "theta2=0", "--until", "0")
+      capture(
+        "--model",
+        "double-pendulum",
+        "--param",
+        "theta1=0",
+        "--param",
+        "theta2=0",
+        "--until",
+        "0"
+      )
     assertEquals(code, 0)
     assertEquals(csv.linesIterator.toList.head, "t,energy,energyDrift,x2,y2")
     assert(csv.linesIterator.toList(1).endsWith(",0.0,-2.0"), csv)
@@ -40,8 +49,16 @@ class RunHeadlessSuite extends munit.FunSuite:
     val path = Files.createTempFile("physis-run", ".json")
     try
       val (code, csv, summary) = capture(
-        "--model", "double-pendulum", "--adaptive", "1e-9", "--until", "2", "--seed", "4",
-        "--manifest", path.toString
+        "--model",
+        "double-pendulum",
+        "--adaptive",
+        "1e-9",
+        "--until",
+        "2",
+        "--seed",
+        "4",
+        "--manifest",
+        path.toString
       )
       assertEquals(code, 0)
       val (replayCode, replayCsv, replaySummary) = capture("--replay", path.toString)

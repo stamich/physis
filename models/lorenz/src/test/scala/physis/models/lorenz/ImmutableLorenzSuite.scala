@@ -32,7 +32,12 @@ object ImmutableLorenz extends Simulation[V3]:
 
 class ImmutableLorenzSuite extends munit.FunSuite:
   private val immutableModel =
-    Simulation.asModel("lorenz-immutable", "1", ImmutableLorenz, v => Digest.ofDoubles(v.x, v.y, v.z))
+    Simulation.asModel(
+      "lorenz-immutable",
+      "1",
+      ImmutableLorenz,
+      v => Digest.ofDoubles(v.x, v.y, v.z)
+    )
 
   test("the pure Simulation[S] Lorenz equals the OdeModel Lorenz bit for bit after 10^4 steps") {
     val pure = Physis.model(immutableModel).stepping(Stepping.Fixed(0.01)).build().runUntil(100.0)

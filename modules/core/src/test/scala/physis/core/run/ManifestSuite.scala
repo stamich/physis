@@ -10,7 +10,8 @@ import physis.core.testing.{CappedDecay, Decay, DecayParams}
 
 class ManifestSuite extends munit.ScalaCheckSuite:
 
-  private val tricky: Gen[Char] = Gen.oneOf('"', '\\', '/', '\n', '\t', '\r', '\u0001', 'ł', '€', ' ')
+  private val tricky: Gen[Char] =
+    Gen.oneOf('"', '\\', '/', '\n', '\t', '\r', '\u0001', 'ł', '€', ' ')
   private val text: Gen[String] =
     Gen.listOf(Gen.frequency(5 -> Gen.alphaNumChar, 1 -> tricky)).map(_.mkString)
   private val finite: Gen[Double] = Gen.oneOf(
@@ -39,7 +40,17 @@ class ManifestSuite extends munit.ScalaCheckSuite:
       until <- finite
       every <- positive
       git <- Gen.option(text)
-    yield Manifest(physis, model, version, VectorMap.from(names.zip(values)), s, seed, until, every, git)
+    yield Manifest(
+      physis,
+      model,
+      version,
+      VectorMap.from(names.zip(values)),
+      s,
+      seed,
+      until,
+      every,
+      git
+    )
 
   property("JSON round-trips exactly") {
     forAll(manifests) { m =>
@@ -87,7 +98,10 @@ class ManifestSuite extends munit.ScalaCheckSuite:
 
   test("replay refuses unknown models and other versions") {
     val m = Physis.model(Decay).build().manifest(until = 1.0)
-    assert(Manifest.replay(m.copy(model = "nope"), registry).left.exists(_.contains("unknown model")))
+    assert(Manifest.replay(
+      m.copy(model = "nope"),
+      registry
+    ).left.exists(_.contains("unknown model")))
     assert(Manifest.replay(m.copy(modelVersion = "2"), registry).left.exists(_.contains("version")))
   }
 

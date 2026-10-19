@@ -128,7 +128,9 @@ object RunHeadless:
       catalog.get(m.model) match
         case None => Left(s"unknown model '${m.model}'")
         case Some(entry) if entry.model.version != m.modelVersion =>
-          Left(s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}")
+          Left(
+            s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}"
+          )
         case Some(_) =>
           Right(
             Options(
@@ -144,7 +146,8 @@ object RunHeadless:
 
   private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Unit] =
     catalog.get(o.model) match
-      case None => Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
+      case None =>
+        Left(s"unknown model '${o.model}' (known: ${catalog.keys.toList.sorted.mkString(", ")})")
       case Some(entry) => executeEntry(entry.asInstanceOf[Entry[Any]], o, out, err)
 
   private def executeEntry(
