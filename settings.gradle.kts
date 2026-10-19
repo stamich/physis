@@ -20,10 +20,13 @@ dependencyResolutionManagement {
 
 rootProject.name = "physis"
 
-include(":core", ":ode", ":verify")
+include(":core", ":ode", ":verify", ":view", ":fx")
 project(":core").projectDir = file("modules/core")
 project(":ode").projectDir = file("modules/ode")
 project(":verify").projectDir = file("modules/verify")
+project(":view").projectDir = file("modules/view")
+project(":fx").projectDir = file("modules/fx")
 
 include(":models:lorenz", ":models:pendulum")
 include(":examples")
+include(":apps:lab")

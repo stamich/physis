@@ -56,6 +56,15 @@ private[run] object Json:
       case JNum(raw) => raw.toLongOption.toRight(s"expected an integer, got '$raw'")
       case other => Left(s"expected an integer, got ${kind(other)}")
 
+    def asArray: Either[String, Vector[Json]] = json match
+      case JArr(items) => Right(items)
+      case other => Left(s"expected an array, got ${kind(other)}")
+
+    /** The field's value if present, `None` if absent; fails only if `json` is not an object. */
+    def optionalField(name: String): Either[String, Option[Json]] = json match
+      case JObj(fields) => Right(fields.collectFirst { case (`name`, v) => v })
+      case other => Left(s"expected an object, got ${kind(other)}")
+
     def asObject: Either[String, Vector[(String, Json)]] = json match
       case JObj(fields) => Right(fields)
       case other => Left(s"expected an object, got ${kind(other)}")

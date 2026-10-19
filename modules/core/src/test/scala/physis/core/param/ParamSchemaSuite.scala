@@ -23,6 +23,11 @@ class ParamSchemaSuite extends munit.ScalaCheckSuite:
     assertEquals(schema.specs.head.doc, "Decay rate")
   }
 
+  test("field kinds come from the codecs") {
+    assertEquals(schema.kinds, Vector(ParamKind.Real, ParamKind.Integer, ParamKind.Flag))
+    assertEquals(ParamSchema.unit.kinds, Vector.empty)
+  }
+
   test("defaults are built from the specs") {
     assertEquals(schema.defaults, DemoParams(0.5, 3, true))
   }

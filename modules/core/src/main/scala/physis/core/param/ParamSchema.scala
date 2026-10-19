@@ -8,6 +8,17 @@ import scala.deriving.Mirror
 enum Scale:
   case Linear, Log
 
+/** The value set of a parameter's field type, for choosing a UI control. */
+enum ParamKind:
+  /** Any double within the range. */
+  case Real
+
+  /** Whole numbers. */
+  case Integer
+
+  /** 0 (false) or 1 (true). */
+  case Flag
+
 /**
  * Description of one model parameter.
  *
@@ -42,18 +53,23 @@ trait ParamCodec[A]:
   def encode(value: A): Double
   def decode(value: Double): Either[String, A]
 
+  /** Which doubles are valid values. */
+  def kind: ParamKind = ParamKind.Real
+
 object ParamCodec:
   given ParamCodec[Double] with
     def encode(value: Double): Double = value
     def decode(value: Double): Either[String, Double] = Right(value)
 
   given ParamCodec[Int] with
+    override def kind: ParamKind = ParamKind.Integer
     def encode(value: Int): Double = value.toDouble
     def decode(value: Double): Either[String, Int] =
       if value.isWhole && math.abs(value) <= Int.MaxValue.toDouble then Right(value.toInt)
       else Left(s"$value is not an integer")
 
   given ParamCodec[Boolean] with
+    override def kind: ParamKind = ParamKind.Flag
     def encode(value: Boolean): Double = if value then 1.0 else 0.0
     def decode(value: Double): Either[String, Boolean] =
       if value == 1.0 then Right(true)
@@ -83,6 +99,9 @@ trait ParamSchema[P]:
   def fromValues(values: Map[String, Double]): Either[String, P]
 
   final def names: IndexedSeq[String] = specs.map(_.name)
+
+  /** Field kinds in field order; all [[ParamKind.Real]] unless the schema knows better. */
+  def kinds: IndexedSeq[ParamKind] = specs.map(_ => ParamKind.Real)
 
   /** Named values in field order. */
   final def toMap(p: P): VectorMap[String, Double] = VectorMap.from(names.zip(toValues(p)))
@@ -164,6 +183,8 @@ private final class MirrorSchema[P <: Product](
   require(extra.isEmpty, s"ParamSpec for unknown field(s): ${extra.mkString(", ")}")
 
   val specs: IndexedSeq[ParamSpec] = labels.map(byName)
+
+  override val kinds: IndexedSeq[ParamKind] = codecs.map(_.kind)
 
   val defaults: P = build(specs.map(_.default)) match
     case Right(p) => p

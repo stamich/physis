@@ -40,6 +40,15 @@ class ManifestSuite extends munit.ScalaCheckSuite:
       until <- finite
       every <- positive
       git <- Gen.option(text)
+      events <- Gen.listOf(
+        for
+          step <- Gen.choose(0L, 1_000_000L)
+          name <- text
+          value <- finite
+        yield ParamEvent(step, VectorMap(name -> value))
+      )
+      steps <- Gen.option(Gen.choose(0L, Long.MaxValue))
+      digest <- Gen.option(Arbitrary.arbitrary[Long])
     yield Manifest(
       physis,
       model,
@@ -49,7 +58,10 @@ class ManifestSuite extends munit.ScalaCheckSuite:
       seed,
       until,
       every,
-      git
+      git,
+      events.toVector,
+      steps,
+      digest
     )
 
   property("JSON round-trips exactly") {
@@ -112,4 +124,51 @@ class ManifestSuite extends munit.ScalaCheckSuite:
 
   test("model ids in a registry are unique") {
     intercept[IllegalArgumentException](ModelRegistry.of(Decay, Decay))
+  }
+
+  test("a format-1 manifest from Physis 0.1 still reads and replays") {
+    val text = scala.io.Source.fromResource("manifest-format1.json").mkString
+    val manifest = Manifest.fromJson(text)
+    assertEquals(manifest.map(_.events), Right(Vector.empty))
+    assertEquals(manifest.map(_.steps), Right(None))
+    val replayed = manifest.flatMap(Manifest.replay(_, registry)).map(_.execute().finalTime)
+    assertEquals(replayed, Right(3.0))
+  }
+
+  test("an unknown future format is refused") {
+    val text = Manifest.toJson(Physis.model(Decay).build().manifest(1.0))
+      .replace("\"format\": 2", "\"format\": 99")
+    assert(Manifest.fromJson(text).left.exists(_.contains("unsupported manifest format 99")))
+  }
+
+  test("parameter changes are written to the manifest and replayed") {
+    val run =
+      Physis.model(Decay).withParams(DecayParams(0.7, 2.0)).stepping(Stepping.Fixed(0.01)).build()
+    run.runSteps(30)
+    run.setParams(Map("k" -> 3.0))
+    run.runSteps(30)
+    run.setParams(Map("y0" -> 7.0, "k" -> 0.5))
+    run.runSteps(30)
+    run.setParams(Map("k" -> 1.0))
+    run.runSteps(30)
+    val manifest = run.manifest(until = run.time).copy(steps = Some(run.stepCount))
+    assertEquals(manifest.events.map(_.step), Vector(30L, 60L, 90L))
+    val replayed = Manifest.fromJson(Manifest.toJson(manifest))
+      .flatMap(Manifest.replay(_, registry))
+      .map(_.execute().finalDigest)
+    assertEquals(replayed, Right(run.digest))
+  }
+
+  test("a manifest with a step count replays exactly that many whole steps") {
+    val run =
+      Physis.model(CappedDecay(0.05)).stepping(Stepping.Adaptive(1e-6, 1e-9, 0.2, 1.0)).build()
+    var i = 0
+    while i < 37 do
+      run.step()
+      i += 1
+    val manifest =
+      run.manifest(until = run.time).copy(steps = Some(run.stepCount), digest = Some(run.digest))
+    val replayed = Manifest.replay(manifest, registry).map(_.execute())
+    assertEquals(replayed.map(_.acceptedSteps), Right(37L))
+    assertEquals(replayed.map(r => Option(r.finalDigest)), Right(manifest.digest))
   }

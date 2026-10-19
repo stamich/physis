@@ -1,0 +1,262 @@
+package physis.lab
+
+import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+
+import javafx.application.Platform
+import javafx.geometry.{Insets, Pos}
+import javafx.scene.{Node, Scene}
+import javafx.scene.control.{ComboBox, Label, Menu, MenuBar, MenuItem, ScrollPane, TextInputControl}
+import javafx.stage.FileChooser
+import javafx.scene.input.{KeyCode, KeyEvent}
+import javafx.scene.layout.{
+  BorderPane,
+  ColumnConstraints,
+  GridPane,
+  HBox,
+  Priority,
+  RowConstraints,
+  VBox
+}
+
+import physis.core.live.Command
+import physis.fx.{
+  Fx,
+  ParamPanel,
+  PlotRenderer,
+  RenderLoop,
+  Renderer,
+  RunControls,
+  SceneRenderer,
+  StatsOverlay,
+  Theme,
+  TrajectoryRenderer
+}
+import physis.view.{Direction, View}
+
+/**
+ * The Physis Lab window contents: model picker, parameter panel and run controls on the left,
+ * the model's views in the centre, statistics and status at the bottom.
+ *
+ * Switching models stops the current live run and render loop and starts new ones; nothing is
+ * shared between sessions except the window. All methods run on the FX application thread.
+ */
+final class LabWindow(
+    models: Vector[LabModel],
+    registry: physis.core.run.ModelRegistry = Catalog.registry,
+    seed: Long = 1L
+):
+  require(models.nonEmpty, "the Lab needs at least one model")
+
+  val root: BorderPane = new BorderPane()
+  root.setStyle(s"-fx-background-color: ${toCss(Theme.Background)};")
+
+  private val picker = new ComboBox[String]()
+  picker.getItems.addAll(models.map(_.title)*)
+  picker.setMaxWidth(Double.MaxValue)
+
+  private val side = new VBox(8)
+  side.setPadding(new Insets(8))
+  side.setPrefWidth(330)
+  side.setStyle("-fx-background-color: #f4f5f7;")
+
+  private val overlay = new StatsOverlay()
+  overlay.node.setTextFill(Theme.Text)
+
+  /** Status messages (manifest saves and replays). */
+  val status: Label = new Label("")
+  status.setTextFill(Theme.Text)
+  status.setPadding(new Insets(4, 8, 4, 8))
+
+  private val bottom = new HBox(16, overlay.node, status)
+  bottom.setAlignment(Pos.CENTER_LEFT)
+  root.setLeft(side)
+  root.setBottom(bottom)
+  root.setTop(menu())
+
+  private def menu(): MenuBar =
+    val save = new MenuItem("Save manifest…")
+    save.setOnAction(_ => chooseAndSave())
+    val replay = new MenuItem("Replay manifest…")
+    replay.setOnAction(_ => chooseAndReplay())
+    val quit = new MenuItem("Close")
+    quit.setOnAction(_ => Option(root.getScene).map(_.getWindow).foreach(_.hide()))
+    new MenuBar(new Menu("File", null, save, replay, quit))
+
+  private def chooser(): FileChooser =
+    val c = new FileChooser()
+    c.getExtensionFilters.add(new FileChooser.ExtensionFilter("Physis manifest", "*.json"))
+    c
+
+  private def chooseAndSave(): Unit =
+    for r <- running do
+      val c = chooser()
+      c.setInitialFileName(s"${r.session.model.id}-session.json")
+      Option(c.showSaveDialog(root.getScene.getWindow)).foreach(f => saveManifest(f.toPath))
+
+  private def chooseAndReplay(): Unit =
+    Option(chooser().showOpenDialog(root.getScene.getWindow)).foreach(f => replayManifest(f.toPath))
+
+  /** Saves the current session's manifest to `path` and reports it in the status line. */
+  def saveManifest(path: Path): Either[String, physis.core.run.Manifest] =
+    running match
+      case None => Left("no session is running")
+      case Some(r) =>
+        val result = LabManifests.save(r.session.live, path)
+        val text = result match
+          case Right(m) =>
+            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, ${m.events.size} parameter changes"
+          case Left(error) => error
+        status.setText(text)
+        result
+
+  /**
+   * Replays the manifest at `path` on a background thread; the outcome appears in the status line
+   * and completes the returned future (on the FX thread).
+   */
+  def replayManifest(path: Path): CompletableFuture[Either[String, ReplayReport]] =
+    val done = new CompletableFuture[Either[String, ReplayReport]]()
+    status.setText(s"Replaying ${path.getFileName}…")
+    def report(result: Either[String, ReplayReport]): Unit =
+      status.setText(result.fold(e => s"Replay failed: $e", _.summary))
+      if !done.complete(result) then ()
+    def work(): Unit =
+      val result = LabManifests.replay(path, registry)
+      Platform.runLater(() => report(result))
+    val worker = new Thread(() => work(), "physis-replay")
+    worker.setDaemon(true)
+    worker.start()
+    done
+
+  private var running: Option[LabWindow.Running] = None
+
+  Fx.onChange(picker.getSelectionModel.selectedIndexProperty) { i =>
+    val index = i.intValue
+    if index >= 0 && !running.exists(_.session.model eq models(index)) then open(models(index).id)
+  }
+
+  /** The current session, if any. */
+  def session: Option[LabSession] = running.map(_.session)
+
+  /** The current render loop, if any. */
+  def loop: Option[RenderLoop] = running.map(_.loop)
+
+  /** The current run controls, if any. */
+  def controls: Option[RunControls] = running.map(_.controls)
+
+  /** Opens model `id`, closing the current session first. */
+  def open(id: String, startPaused: Boolean = false): Unit =
+    val model =
+      models.find(_.id == id).getOrElse(throw new IllegalArgumentException(s"unknown model '$id'"))
+    close()
+    val session = model.open(seed, startPaused)
+    val (viewNode, renderers) = LabWindow.build(session.view)
+    val loop = new RenderLoop(session.live, renderers, Some(overlay))
+    val panel = new ParamPanel(session.schema, session.initial, loop.setParam)
+    val controls = new RunControls(session.live.send)
+    var lastStep = -1L
+    loop.onFrame { _ =>
+      loop.snapshot.foreach { s =>
+        controls.refresh(s)
+        // after a reset the run is back at its initial parameters: show them
+        if s.step < lastStep then panel.refresh(s)
+        lastStep = s.step
+      }
+    }
+    val scroll = new ScrollPane(panel.node)
+    scroll.setFitToWidth(true)
+    VBox.setVgrow(scroll, Priority.ALWAYS)
+    side.getChildren.setAll(new Label("Model"), picker, scroll, controls.node)
+    root.setCenter(viewNode)
+    running = Some(LabWindow.Running(session, loop, panel, controls))
+    picker.getSelectionModel.select(models.indexOf(model))
+    status.setText("")
+    session.live.start()
+    loop.start()
+
+  /** Stops the current session's render loop and simulation thread. */
+  def close(): Unit =
+    running.foreach { r =>
+      r.loop.stop()
+      r.session.live.stop()
+    }
+    running = None
+
+  /** Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed. */
+  def installShortcuts(scene: Scene): Unit =
+    scene.addEventFilter(KeyEvent.KEY_PRESSED, (e: KeyEvent) => shortcut(e))
+
+  private def shortcut(e: KeyEvent): Unit =
+    val typing = Option(e.getTarget).exists(_.isInstanceOf[TextInputControl])
+    if !typing then
+      for r <- running do
+        e.getCode match
+          case KeyCode.SPACE =>
+            r.controls.togglePause()
+            e.consume()
+          case KeyCode.RIGHT =>
+            r.session.live.send(Command.StepOnce)
+            e.consume()
+          case KeyCode.R =>
+            r.session.live.send(Command.Reset)
+            e.consume()
+          case KeyCode.PLUS | KeyCode.EQUALS | KeyCode.ADD =>
+            r.controls.changeSpeed(2.0)
+            e.consume()
+          case KeyCode.MINUS | KeyCode.SUBTRACT =>
+            r.controls.changeSpeed(0.5)
+            e.consume()
+          case _ => ()
+
+  private def toCss(c: javafx.scene.paint.Color): String =
+    f"#${(c.getRed * 255).round}%02x${(c.getGreen * 255).round}%02x${(c.getBlue * 255).round}%02x"
+
+object LabWindow:
+  private final case class Running(
+      session: LabSession,
+      loop: RenderLoop,
+      panel: ParamPanel,
+      controls: RunControls
+  )
+
+  /** The node for a view and the renderers inside it; layouts split their area equally. */
+  def build(view: View): (Node, Seq[Renderer]) = view match
+    case v: View.Trajectory =>
+      val r = new TrajectoryRenderer(v)
+      (r.node, Seq(r))
+    case v: View.Plot =>
+      val r = new PlotRenderer(v)
+      (r.node, Seq(r))
+    case v: View.Scene2D =>
+      val r = new SceneRenderer(v)
+      (r.node, Seq(r))
+    case View.Layout(views, direction) =>
+      val parts = views.map(build)
+      val grid = new GridPane()
+      grid.setHgap(2)
+      grid.setVgap(2)
+      val share = 100.0 / math.max(1, parts.size)
+      for ((node, _), i) <- parts.zipWithIndex do
+        direction match
+          case Direction.Horizontal =>
+            val c = new ColumnConstraints()
+            c.setPercentWidth(share)
+            grid.getColumnConstraints.add(c)
+            grid.add(node, i, 0)
+          case Direction.Vertical =>
+            val c = new RowConstraints()
+            c.setPercentHeight(share)
+            grid.getRowConstraints.add(c)
+            grid.add(node, 0, i)
+        GridPane.setHgrow(node, Priority.ALWAYS)
+        GridPane.setVgrow(node, Priority.ALWAYS)
+      direction match
+        case Direction.Horizontal =>
+          val r = new RowConstraints()
+          r.setVgrow(Priority.ALWAYS)
+          grid.getRowConstraints.add(r)
+        case Direction.Vertical =>
+          val c = new ColumnConstraints()
+          c.setHgrow(Priority.ALWAYS)
+          grid.getColumnConstraints.add(c)
+      (grid, parts.flatMap(_._2))

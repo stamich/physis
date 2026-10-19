@@ -6,5 +6,6 @@ description = "Physis reference model: pendulum."
 
 dependencies {
     api(project(":ode"))
+    api(project(":view"))
     testImplementation(project(":verify"))
 }

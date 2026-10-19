@@ -44,6 +44,20 @@ The reference values come from `tools/lorenz_reference.py` (mpmath Taylor-series
 40 significant digits) and are stored in `src/test/resources/lorenz-t1.csv`. Regenerating them
 is a deliberate, reviewed change.
 
+## Views
+
+`LorenzViews` (in `models/lorenz`, depending only on `physis-view`) describes how Physis Lab
+draws the system:
+
+- `trajectory` — the attractor as a 3D trajectory of the state (x, y, z) with a 20 000-point
+  trail coloured by age (viridis), projected through an orbit camera that refits to the trail;
+- `coordinates` — x, y and z plotted over the last 20 simulated seconds;
+- `default` — the two stacked vertically.
+
+The Lab runs the model with fixed RK4 steps of 0.002 at one simulated second per second. Good
+parameters to explore live: `rho` (the attractor collapses to fixed points below about 24.74),
+`sigma` and `beta`.
+
 ## References
 
 - E. N. Lorenz, "Deterministic Nonperiodic Flow", *Journal of the Atmospheric Sciences* 20,

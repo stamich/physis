@@ -4,9 +4,12 @@ munit = "1.2.1"
 munit-scalacheck = "1.1.0"
 scalafmt = "3.9.4"
 spotless = "7.2.1"
+javafx = "24.0.2"
+scalafx = "24.0.2-R36"
 
 [libraries]
 scala3-library = { module = "org.scala-lang:scala3-library_3", version.ref = "scala" }
 munit = { module = "org.scalameta:munit_3", version.ref = "munit" }
 munit-scalacheck = { module = "org.scalameta:munit-scalacheck_3", version.ref = "munit-scalacheck" }
 spotless-gradle = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "spotless" }
+scalafx = { module = "org.scalafx:scalafx_3", version.ref = "scalafx" }
