@@ -1,6 +1,7 @@
 package physis.core
 
 import physis.core.param.ParamSchema
+import physis.core.run.Intervention
 import physis.core.random.SplittableRng
 
 /**
@@ -42,6 +43,22 @@ trait Model[P]:
    * scheduled change) and for every live change; a rejection names the limit that was hit.
    */
   def check(p: P, stepping: Stepping): Either[String, Unit] = Right(())
+
+  /**
+   * Whether this model can apply `iv` at all: it knows the target, the operation and the limits.
+   * Called when an intervention is sent or scheduled, before any step; models that support
+   * interventions override it together with [[intervene]].
+   */
+  def accepts(iv: Intervention): Either[String, Unit] =
+    Left(s"model '$id' does not support interventions")
+
+  /**
+   * Edits `state` in place as `iv` describes, between two steps. Must be a pure function of
+   * its arguments (no clock, no global randomness) so that replay repeats it exactly, and must
+   * not allocate in steady state. The default refuses.
+   */
+  def intervene(state: State, p: P, iv: Intervention): Either[String, Unit] =
+    Left(s"model '$id' does not support interventions")
 
   /** Creates the initial state. */
   def init(p: P, rng: SplittableRng): State

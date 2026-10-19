@@ -59,6 +59,15 @@ costs 16 fill calls whatever the number of boids), above a plot of the polarizat
 
 Speed in the Lab is 0.1x to 20x, 1x by default (60 steps per second).
 
+## Disturbing the flock
+
+The Lab's **Disturb** tool turns every boid inside a circle towards the direction pointing away
+from the circle's centre by a given strength (radians, above 0 up to 2), or exactly onto that
+direction when it is closer than that. Speeds are kept. It only disturbs: boids are not added,
+removed or placed. The turn uses the model's own sine and cosine series and no random numbers,
+so it is the same on every platform and the flock replays after a disturbance. See
+[interventions](../interventions.md).
+
 ## Verification
 
 | Check | Threshold | Where |
@@ -69,6 +78,7 @@ Speed in the Lab is 0.1x to 20x, 1x by default (60 steps per second).
 | Thresholds from an independent brute-force implementation (`tools/boids_reference.py`) | statistical, not bit for bit | `VicsekSuite` |
 | Result independent of the order of the boids | | `BoidsSuite` |
 | Speeds and positions stay within bounds for 500 steps with every rule on | | `BoidsSuite` |
+| A disturbance turns only the boids inside the disc, away from its centre | exact | `BoidsDisturbSuite` |
 | Two boids alone: separation pushes apart, cohesion pulls together | | `BoidsSuite` |
 | Sine and cosine series vs `StrictMath` on [−1.5, 1.5] | 1e-15 | `BoidsSuite` |
 | Golden digest of 500 boids, seed 7, 300 steps | equal on every platform | `BoidsDeterminismSuite` |

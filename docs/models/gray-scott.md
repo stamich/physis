@@ -56,6 +56,13 @@ at the bottom of the window.
 
 Speed in the Lab is in steps per second: 10 to 4 000, 600 by default.
 
+## Painting
+
+The Lab's **Paint v** tool sets v inside a disc to a value (0 to 1; the right button erases),
+and **Erase v** sets it to zero; both are `Brush` interventions on the `v` slice, periodic across
+the border. Values are clamped to [0, 1] when painted. A bump of v in the rest state `u = 1`,
+`v = 0` grows into a new pattern. See [interventions](../interventions.md).
+
 ## Verification
 
 | Check | Threshold | Where |
@@ -68,6 +75,7 @@ Speed in the Lab is in steps per second: 10 to 4 000, 600 by default.
 | Stability guard accepts D·dt up to 1.25, refuses more, at build and live | exact | `GrayScottSuite` |
 | Seeded run with noise: golden digest after 500 steps | equal | `SeededGoldenSuite` |
 | Live session with three changes and a reseed replays | same digest | `SeededGoldenSuite`, `LabManifestsSuite` |
+| A brush sets and erases cells, wraps across the seam and keeps u and v in [0, 1] | exact | `GrayScottBrushSuite` |
 | Regimes on 128 × 128 (mitosis coverage, the pattern dying out at F 0.09, k 0.06) | thresholds from the reference | `RegimeSuite` (slow) |
 | A step allocates less than one byte | | `GrayScottSuite` |
 | At least 15 million cell updates per second on 256 × 256 | | `ThroughputSuite` (slow) |

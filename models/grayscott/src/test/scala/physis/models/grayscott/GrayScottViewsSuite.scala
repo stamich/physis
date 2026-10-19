@@ -31,7 +31,7 @@ class GrayScottViewsSuite extends munit.FunSuite:
     val slices = GrayScottState.stateExport.layout(state).map(_.name)
     for view <- Seq(GrayScottViews.u, GrayScottViews.v) do
       view match
-        case View.Heatmap(slice, range, _, _) =>
+        case View.Heatmap(slice, range, _, _, _) =>
           assert(slices.contains(slice), s"no slice $slice")
           assertEquals(range, ValueRange.Fixed(0.0, 1.0))
         case other => fail(s"expected a heatmap, got $other")

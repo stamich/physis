@@ -41,12 +41,15 @@ enum View:
    * @param range    which values get the first and the last colour
    * @param colormap colours
    * @param title    shown above the image; empty for none
+   * @param overlay  optional slice of the same size drawn on top as a flat grey wherever its value
+   *                 is 1 or more (walls); empty cells show the field
    */
   case Heatmap(
       slice: String,
       range: ValueRange = ValueRange.Auto,
       colormap: Colormap = Colormap.Viridis,
-      title: String = ""
+      title: String = "",
+      overlay: Option[String] = None
   )
 
   /**

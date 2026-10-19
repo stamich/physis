@@ -65,6 +65,69 @@ class LabManifestsSuite extends munit.FunSuite:
     finally live.stop()
   }
 
+  private def awaitSteps(live: physis.core.live.LiveRun[?, ?], n: Long): Unit =
+    val deadline = System.currentTimeMillis() + 30_000
+    while live.manifest().steps.forall(_ < n) do
+      assert(System.currentTimeMillis() < deadline, "steps not taken")
+      Thread.sleep(10)
+
+  test("walls and a pulse in Wave replay headless to the same digest") {
+    import physis.core.run.{Disc, Intervention, Op}
+    val live = Catalog.wave.open(seed = 1L, startPaused = true).live
+    live.start()
+    try
+      def steps(n: Int): Unit = for _ <- 1 to n do live.send(Command.StepOnce)
+      steps(10)
+      live.send(Command.Intervene(Intervention.Brush(
+        "wall",
+        Disc(120.0, 100.0, 5.0),
+        Op.Assign,
+        1.0
+      )))
+      live.send(Command.Intervene(Intervention.Pulse("u", 60.0, 128.0, 4.0, 1.0)))
+      steps(40)
+      live.send(Command.SetParams(Map("damping" -> 0.01)))
+      live.send(Command.Intervene(Intervention.Brush(
+        "wall",
+        Disc(120.0, 100.0, 3.0),
+        Op.Erase,
+        0.0
+      )))
+      steps(30)
+      awaitSteps(live, 80L)
+      val file = Files.createTempFile("physis-lab-wave", ".json")
+      val saved = LabManifests.save(live, file).fold(e => fail(e), identity)
+      assertEquals(saved.interventions.size, 3)
+      assertEquals(saved.events.size, 1)
+      val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+      assertEquals(report.steps, 80L)
+      assertEquals(report.interventions, 3)
+      assertEquals(report.matches, Some(true), report.summary)
+      assert(report.summary.contains("3 strokes"), report.summary)
+      Files.delete(file)
+    finally live.stop()
+  }
+
+  test("a stroke in Gray-Scott replays to the same digest") {
+    import physis.core.run.{Disc, Intervention, Op}
+    val live = Catalog.grayScott.open(seed = 4L, startPaused = true).live
+    live.start()
+    try
+      def steps(n: Int): Unit = for _ <- 1 to n do live.send(Command.StepOnce)
+      steps(20)
+      live.send(Command.Intervene(Intervention.Brush("v", Disc(40.0, 40.0, 6.0), Op.Assign, 0.5)))
+      steps(40)
+      awaitSteps(live, 60L)
+      val file = Files.createTempFile("physis-lab-gs-stroke", ".json")
+      val saved = LabManifests.save(live, file).fold(e => fail(e), identity)
+      assertEquals(saved.interventions.size, 1)
+      val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+      assertEquals(report.matches, Some(true), report.summary)
+      assert(report.summary.contains("1 stroke,"), report.summary)
+      Files.delete(file)
+    finally live.stop()
+  }
+
   test("replay reports unreadable files and a changed digest") {
     assert(LabManifests.replay(
       java.nio.file.Path.of("/nonexistent/m.json"),

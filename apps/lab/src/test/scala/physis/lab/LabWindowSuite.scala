@@ -3,6 +3,7 @@ package physis.lab
 import javafx.scene.Scene
 import javafx.stage.Stage
 
+import physis.core.live.Command
 import physis.view.{Direction, View}
 
 class CatalogSuite extends munit.FunSuite:
@@ -51,6 +52,7 @@ class LabWindowSuite extends LabSuite:
       for id <- Seq(
           Catalog.lorenz.id,
           Catalog.grayScott.id,
+          Catalog.wave.id,
           Catalog.boids.id,
           Catalog.pendulum.id
         )
@@ -95,6 +97,64 @@ class LabWindowSuite extends LabSuite:
 
   private def latest(w: LabWindow)(f: physis.core.live.Snapshot => Boolean): Boolean =
     LabFx.onFx(w.loop.flatMap(_.snapshot).exists(f))
+
+  fxTest("painting on Gray-Scott is one recorded intervention per dab, counted in the tool box") {
+    withWindow(Catalog.grayScott.id) { window =>
+      val box = LabFx.onFx(window.toolBox.get)
+      assertEquals(LabFx.onFx(box.selected), None)
+      LabFx.onFx(box.select(Some("Paint v")))
+      val painter = LabFx.onFx(window.paintables.head)
+      LabFx.onFx {
+        painter.onStroke(
+          physis.fx.StrokeBatch(
+            false,
+            Vector(physis.view.Dab(10.5, 10.5), physis.view.Dab(14.5, 10.5)),
+            true
+          )
+        )
+      }
+      LabFx.await("two interventions")(latest(window)(_.interventions == 2))
+      val ivs = LabFx.onFx(window.session.get.live.manifest().interventions)
+      assertEquals(ivs.size, 2)
+      assertEquals(LabFx.onFx(box.counter.getText), "2 strokes recorded")
+      // switched off, a stroke changes nothing
+      LabFx.onFx(box.select(None))
+      LabFx.onFx(painter.onStroke(physis.fx.StrokeBatch(
+        false,
+        Vector(physis.view.Dab(3.0, 3.0)),
+        true
+      )))
+      assertEquals(LabFx.onFx(window.session.get.live.manifest().interventions.size), 2)
+    }
+  }
+
+  fxTest("a wave preset restarts with its walls painted at step 0, and Reset keeps them") {
+    withWindow(Catalog.wave.id) { window =>
+      LabFx.onFx(window.applyPreset("Double slit"))
+      LabFx.await("preset restarted")(latest(window)(s =>
+        s.param("edge") == 3.0 && s.interventions > 10
+      ))
+      val manifest = LabFx.onFx(window.session.get.live.manifest())
+      assert(manifest.interventions.nonEmpty)
+      assert(manifest.interventions.forall(_.step == 0L), "painting happened after step 0")
+      val painted = manifest.interventions.size
+      LabFx.onFx(window.controls.foreach(_.togglePause()))
+      LabFx.await("paused")(latest(window)(_.paused))
+      // a stroke with the Wall tool is one more intervention; Reset returns to the preset's
+      val box = LabFx.onFx(window.toolBox.get)
+      LabFx.onFx(box.select(Some("Wall")))
+      LabFx.onFx(
+        window.paintables.head
+          .onStroke(physis.fx.StrokeBatch(false, Vector(physis.view.Dab(40.5, 40.5)), true))
+      )
+      // a paused run applies the stroke at the next step
+      LabFx.onFx(window.session.get.live.send(Command.StepOnce))
+      LabFx.await("stroke recorded")(latest(window)(_.interventions == painted + 1))
+      LabFx.onFx(window.session.get.live.send(Command.Reset))
+      LabFx.onFx(window.session.get.live.send(Command.StepOnce))
+      LabFx.await("reset")(latest(window)(s => s.step == 1L && s.interventions == painted))
+    }
+  }
 
   fxTest("a preset is one parameter change, and a reseed starts the run again") {
     withWindow(Catalog.grayScott.id) { window =>

@@ -1,10 +1,11 @@
 package physis.fx
 
+import javafx.scene.input.{MouseButton, MouseEvent, ScrollEvent}
 import javafx.scene.layout.Region
 import javafx.scene.paint.Color
 
 import physis.core.live.Snapshot
-import physis.view.View
+import physis.view.{StrokePlanner, View}
 
 /**
  * Draws a [[View.Particles]]: every particle of a periodic world as a small triangle pointing
@@ -15,8 +16,11 @@ import physis.view.View
  * calls however many particles there are. The world is scaled uniformly and centred. A particle
  * close to an edge is drawn a second time on the opposite side, so the flock does not seem to
  * be cut off at the border.
+ *
+ * Like a heatmap it can be painted on ([[Paintable]]): dabs are in world units, y up, and the
+ * brush ring is drawn on the canvas after the particles.
  */
-final class ParticlesRenderer(view: View.Particles) extends Renderer:
+final class ParticlesRenderer(view: View.Particles) extends Renderer with Paintable:
   private val pane = new CanvasPane
   val node: Region = pane
 
@@ -31,6 +35,85 @@ final class ParticlesRenderer(view: View.Particles) extends Renderer:
   private var worldW = 0.0
   private var worldH = 0.0
   private var ready = false
+
+  // ---- pointer tools ----
+  radiusRange = (5.0, 400.0)
+  private var brushOn = false
+  private var brushRadius = 60.0
+  private var periodicX = true
+  private var periodicY = true
+  private var stroke: StrokePlanner = null
+  private var strokeSecondary = false
+  private var strokeFinished = false
+  private var pointer: Option[(Double, Double)] = None
+  private var ringMoved = false
+  // geometry of the last frame, to turn pixels into world units
+  private var left = 0.0
+  private var top = 0.0
+  private var frameHeight = 0.0
+  private var frameScale = 0.0
+
+  def setBrush(enabled: Boolean, radius: Double): Unit =
+    brushOn = enabled
+    brushRadius = math.max(radiusRange._1, math.min(radiusRange._2, radius))
+    ringMoved = true
+
+  def brushEnabled: Boolean = brushOn
+
+  def radius: Double = brushRadius
+
+  def stroking: Boolean = stroke != null && !strokeFinished
+
+  def setWrap(x: Boolean, y: Boolean): Unit =
+    periodicX = x
+    periodicY = y
+
+  private def worldX(e: MouseEvent): Double = (e.getX - left) / frameScale
+  private def worldY(e: MouseEvent): Double = (top + frameHeight - e.getY) / frameScale
+
+  pane.setOnMouseMoved { e =>
+    pointer = Some((e.getX, e.getY))
+    ringMoved = true
+  }
+  pane.setOnMouseExited { _ =>
+    pointer = None
+    ringMoved = true
+  }
+  pane.setOnMousePressed { e =>
+    if brushOn && frameScale > 0.0 && (e.getButton == MouseButton.PRIMARY || e.getButton == MouseButton.SECONDARY)
+    then
+      stroke = new StrokePlanner(worldW, worldH, periodicX, periodicY)
+      stroke.radius = brushRadius
+      strokeSecondary = e.getButton == MouseButton.SECONDARY
+      strokeFinished = false
+      stroke.begin(worldX(e), worldY(e))
+  }
+  pane.setOnMouseDragged { e =>
+    pointer = Some((e.getX, e.getY))
+    ringMoved = true
+    if frameScale > 0.0 && stroke != null && !strokeFinished then
+      stroke.extend(worldX(e), worldY(e))
+  }
+  pane.setOnMouseReleased { e =>
+    if stroke != null && !strokeFinished then
+      stroke.extend(worldX(e), worldY(e))
+      stroke.end()
+      strokeFinished = true
+  }
+  pane.setOnScroll { (e: ScrollEvent) =>
+    if brushOn && e.getDeltaY != 0.0 then
+      val step = math.max(1.0, math.round(brushRadius * 0.1).toDouble)
+      setBrush(true, if e.getDeltaY > 0.0 then brushRadius + step else brushRadius - step)
+      onRadius(brushRadius)
+      e.consume()
+  }
+
+  private def flushStroke(): Unit =
+    if stroke != null then
+      val dabs = stroke.take()
+      if dabs.nonEmpty || strokeFinished then
+        onStroke(StrokeBatch(strokeSecondary, dabs, strokeFinished))
+      if strokeFinished then stroke = null
 
   /** Fill calls made by the last frame (at most [[ParticlesRenderer.Bands]]), for tests. */
   @volatile var lastFillCalls: Int = 0
@@ -68,7 +151,10 @@ final class ParticlesRenderer(view: View.Particles) extends Renderer:
           i += 1
         ready = true
 
-  def dirty: Boolean = pane.takeResized()
+  def dirty: Boolean =
+    val resized = pane.takeResized()
+    val moved = ringMoved
+    resized || moved || stroke != null
 
   def reset(): Unit = ()
 
@@ -86,8 +172,10 @@ final class ParticlesRenderer(view: View.Particles) extends Renderer:
       val scale = math.max(1e-9, math.min((w - 2 * pad) / worldW, (h - 2 * pad) / worldH))
       val pw = worldW * scale
       val ph = worldH * scale
-      val left = (w - pw) / 2
-      val top = (h - ph) / 2
+      left = (w - pw) / 2
+      top = (h - ph) / 2
+      frameHeight = ph
+      frameScale = scale
       gc.setStroke(Theme.Axis)
       gc.setLineWidth(1)
       gc.strokeRect(left - 0.5, top - 0.5, pw + 1, ph + 1)
@@ -134,6 +222,15 @@ final class ParticlesRenderer(view: View.Particles) extends Renderer:
           gc.fill()
           fills += 1
         b += 1
+    if brushOn && frameScale > 0.0 then
+      pointer.foreach { (px, py) =>
+        val rr = brushRadius * frameScale
+        gc.setStroke(Color.WHITE)
+        gc.setLineWidth(1.5)
+        gc.strokeOval(px - rr, py - rr, 2 * rr, 2 * rr)
+      }
+    ringMoved = false
+    flushStroke()
     lastFillCalls = fills
     lastTriangles = triangles
 

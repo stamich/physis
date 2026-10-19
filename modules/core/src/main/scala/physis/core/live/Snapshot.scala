@@ -21,6 +21,9 @@ final class Snapshot(val stateSize: Int, val probeCount: Int):
   /** Rejected attempts so far (adaptive stepping). */
   var rejected: Long = 0L
 
+  /** Interventions applied (and so recorded in the manifest) since the run was created. */
+  var interventions: Int = 0
+
   /** Measured simulation speed, in steps per wall-clock second. */
   var stepsPerSecond: Double = 0.0
 

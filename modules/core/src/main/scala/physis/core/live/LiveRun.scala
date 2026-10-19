@@ -3,7 +3,7 @@ package physis.core.live
 import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeUnit}
 import java.util.concurrent.locks.LockSupport
 
-import physis.core.run.{Manifest, Run, RunBuilder}
+import physis.core.run.{Intervention, InterventionEvent, Manifest, Run, RunBuilder}
 
 /** Instructions from the UI to a [[LiveRun]], applied by the simulation thread between steps. */
 enum Command:
@@ -19,8 +19,24 @@ enum Command:
    * Builds a new run from the definition with `values` replacing named parameters (restart-only
    * ones included) and, optionally, a new seed. Time, step count and the event log start again;
    * the new definition also becomes what [[Reset]] returns to. On error the old run continues.
+   *
+   * `painted` replaces the interventions applied before step 0 (a preset's walls, say); they are
+   * part of the definition, so [[Reset]] and later restarts bring them back. `None` keeps the
+   * ones the definition has.
    */
-  case Restart(values: Map[String, Double], seed: Option[Long])
+  case Restart(
+      values: Map[String, Double],
+      seed: Option[Long],
+      painted: Option[Vector[Intervention]] = None
+  )
+
+  /**
+   * An edit of the state (a brush dab, a pulse). It is checked when the command is read and
+   * applied immediately before the next step, after any parameter change of that step; a
+   * paused run applies it at the next single step or when it resumes. Edits are recorded in the
+   * manifest, and [[Reset]] and [[Restart]] clear them with the rest of the log.
+   */
+  case Intervene(intervention: Intervention)
 
 /**
  * Drives a [[Run]] from a dedicated simulation thread against wall-clock time.
@@ -67,6 +83,7 @@ final class LiveRun[P, S](
   private var error = ""
   private var paramValues: IndexedSeq[Double] = run.model.params.toValues(run.params)
   private var paramEventsSeen = 0
+  private var refusalShown: Option[String] = None
 
   private def newBuffer(): TripleBuffer[Snapshot] =
     val size = exporter.size(run.state)
@@ -102,9 +119,9 @@ final class LiveRun[P, S](
     answerManifestRequests()
 
   /**
-   * Manifest of the session so far: initial parameters, every parameter change as a step-indexed
-   * event, the exact number of steps taken and the final digest. Replaying it takes the same
-   * steps and reproduces the digest bit for bit.
+   * Manifest of the session so far: initial parameters, every parameter change and every
+   * intervention as step-indexed events, the exact number of steps taken and the final digest.
+   * Replaying it takes the same steps and reproduces the digest bit for bit.
    *
    * Taken by the simulation thread between two steps; callable from any thread.
    */
@@ -177,12 +194,16 @@ final class LiveRun[P, S](
         case Command.Reset =>
           run = base.build()
           afterNewRun()
-        case Command.Restart(values, newSeed) => restart(values, newSeed)
+        case Command.Restart(values, newSeed, painted) => restart(values, newSeed, painted)
         case Command.SetSpeed(s) =>
           if s > 0.0 && !s.isInfinite then
             speed = s
             simTarget = run.time
           else error = s"invalid speed $s"
+        case Command.Intervene(iv) =>
+          run.intervene(iv) match
+            case Right(()) => error = ""
+            case Left(message) => error = message
         case Command.SetParams(values) =>
           run.setParams(values) match
             case Right(()) => error = ""
@@ -194,15 +215,22 @@ final class LiveRun[P, S](
   private def afterNewRun(): Unit =
     simTarget = 0.0
     paramEventsSeen = 0
+    refusalShown = None
     paramValues = run.model.params.toValues(run.params)
     layout = exporter.layout(run.state)
     error = ""
     if buffer.back.stateSize != exporter.size(run.state) then buffer = newBuffer()
 
-  private def restart(values: Map[String, Double], newSeed: Option[Long]): Unit =
+  private def restart(
+      values: Map[String, Double],
+      newSeed: Option[Long],
+      painted: Option[Vector[Intervention]]
+  ): Unit =
     try
       val withValues = base.overrides(values)
-      val next = newSeed.fold(withValues)(withValues.seed)
+      val withPainting =
+        painted.fold(withValues)(ivs => withValues.interventions(ivs.map(InterventionEvent(0L, _))))
+      val next = newSeed.fold(withPainting)(withPainting.seed)
       val fresh = next.build()
       base = next
       run = fresh
@@ -213,12 +241,16 @@ final class LiveRun[P, S](
     if run.events.size != paramEventsSeen then
       paramEventsSeen = run.events.size
       paramValues = run.model.params.toValues(run.params)
+    if run.lastRefusal != refusalShown then
+      refusalShown = run.lastRefusal
+      refusalShown.foreach(message => error = message)
     val out = buffer
     val s = out.back
     s.slices = layout
     s.time = run.time
     s.step = run.stepCount
     s.rejected = run.rejectedCount
+    s.interventions = run.interventions.size
     s.stepsPerSecond = stepsPerSecond
     s.speed = speed
     s.paused = paused

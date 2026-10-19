@@ -4,7 +4,8 @@ import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec, Preset}
 import physis.core.random.SplittableRng
-import physis.fields.{Boundaries, Field2D, Grid2D, Stencils}
+import physis.core.run.Intervention
+import physis.fields.{Boundaries, Brush, Field2D, Grid2D, Stencils}
 
 /**
  * Parameters of the Gray-Scott model.
@@ -207,6 +208,30 @@ object GrayScott extends Model[GrayScottParams]:
     state.step(p.Du, p.Dv, p.F, p.k, dt)
     ctx.taken = dt
     ctx.suggestedNext = dt
+
+  /**
+   * Strokes paint `u` or `v` inside a disc on the periodic grid: set, add or erase, and the
+   * result is clamped to [0, 1], the range both concentrations live in, so a stroke cannot make
+   * the scheme leave it.
+   */
+  override def accepts(iv: Intervention): Either[String, Unit] = iv match
+    case Intervention.Brush("u" | "v", _, _, _) => Right(())
+    case Intervention.Brush(target, _, _, _) =>
+      Left(s"gray-scott has no field '$target' to paint (use 'u' or 'v')")
+    case _ => Left("gray-scott only takes brush strokes on 'u' and 'v'")
+
+  override def intervene(
+      state: GrayScottState,
+      p: GrayScottParams,
+      iv: Intervention
+  ): Either[String, Unit] =
+    accepts(iv).map { _ =>
+      iv match
+        case Intervention.Brush(target, disc, op, value) =>
+          val field = if target == "u" then state.u else state.v
+          val _ = Brush(field, disc, true, true, op, value, 0.0, 1.0)
+        case _ => ()
+    }
 
   def digest(state: GrayScottState): Long =
     state.v.digestInto(state.u.digestInto(Digest.start))

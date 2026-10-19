@@ -2,6 +2,50 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.4.0 — waves and interventions
+
+Fourth milestone: painting into a running model. Brush strokes, pulses and disturbances are
+recorded as interventions, so a painted session replays bit for bit, and the wave equation is the
+first model made for it.
+
+### Added
+
+- **Interventions** (`modules/core`): `Intervention.Brush`, `Pulse` and `Disturb`, `Disc` and
+  `Op`; `Model.accepts` and `Model.intervene` (both refuse by default); `Run.intervene`, applied
+  before the next step after the parameter changes; `RunBuilder.interventions`; manifest format 3
+  (format 2 is still written when there are no strokes); `Command.Intervene` and
+  `Command.Restart(values, seed, painted)`; `Snapshot.interventions`; see
+  [docs/interventions.md](docs/interventions.md).
+- **Fields** (`modules/fields`): `Brush.foreachCell` (allocation-free, periodic, each cell once),
+  `Mask` and `Pulse`.
+- **Waves** (`models/wave`): the damped wave equation with leapfrog, a wall mask, a point source,
+  periodic, reflective, free and absorbing (sponge) edges, a Courant guard, an energy probe, five
+  presets, an independent numpy reference (`tools/wave_reference.py`) and golden digests;
+  [docs/models/wave.md](docs/models/wave.md).
+- **Gray–Scott and Boids**: a brush on u and v; a disturbance of the boids inside a circle.
+- **physis-view**: `ValueRange.Symmetric` and `SymmetricAuto`, a heatmap overlay (walls in flat
+  grey), `StrokePlanner` (dabs at most half a radius apart, wrapped across seams).
+- **physis-fx**: pointer tools on heatmaps and on the particle view (`Paintable`), the brush ring,
+  the mouse wheel for the radius, `ToolBox` with a stroke counter.
+- **Physis Lab**: Waves (20–2 000 steps/s) and the tool box of Gray–Scott, Boids and Waves; B
+  switches the tool; the status line reports strokes; a double-slit screenshot in CI.
+- **Tests**: slow tests for the wave (40 million cell updates per second, a dab under 0.2 ms, the
+  absorbing edge on 256 × 256), Lab tests for painting, wave presets and painted sessions that
+  replay to the same digest.
+
+### Changed from the 0.4 plan
+
+- The edge is a restart-only parameter (`edge`), and the absorbing edge is a sponge layer, not a
+  one-way boundary condition.
+- Boids only take `Disturb`; they do not get an eraser or a way to add agents.
+- The versions of the Gray–Scott and Boids models stay 0.3.0: a run without interventions is
+  unchanged.
+- Applying a preset with painting is one `Command.Restart` that carries the painting, so the
+  walls are part of the new definition and Reset brings them back.
+- JDK 25 is not used in this milestone; the build stays on JDK 22.
+- Not measured here: the frame rate and the feel of a stroke on a real display (the plan's manual
+  check); CI runners have no GPU.
+
 ## 0.3.0 — fields and agents
 
 Third milestone: numerical fields and agent-based models. Two new models, Gray–Scott

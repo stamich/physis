@@ -28,7 +28,8 @@ final class Run[P, S] private[run] (
     val seed: Long,
     val probes: Vector[Probe[S]],
     val sampleEvery: Double,
-    scheduled: Vector[ParamEvent]
+    scheduled: Vector[ParamEvent],
+    scheduledInterventions: Vector[InterventionEvent] = Vector.empty
 ):
   private val rootRng = SplittableRng(seed)
   private val ctx = StepContext()
@@ -41,6 +42,10 @@ final class Run[P, S] private[run] (
   private var pending: VectorMap[String, Double] = VectorMap.empty
   private var recorded: Vector[ParamEvent] = Vector.empty
   private var nextScheduled = 0
+  private var pendingInterventions: Vector[Intervention] = Vector.empty
+  private var recordedInterventions: Vector[InterventionEvent] = Vector.empty
+  private var nextScheduledIntervention = 0
+  private var refusal: Option[String] = None
 
   private var t = 0.0
   private var n = 0L
@@ -74,6 +79,23 @@ final class Run[P, S] private[run] (
 
   /** Parameter changes applied so far, in order. */
   def events: Vector[ParamEvent] = recorded
+
+  /** Interventions applied so far, in order, each with the step it was applied before. */
+  def interventions: Vector[InterventionEvent] = recordedInterventions
+
+  /** Why the last queued intervention was refused when it came to be applied, if it was. */
+  def lastRefusal: Option[String] = refusal
+
+  /**
+   * Queues an edit of the state, applied immediately before the next step: after the parameter
+   * changes of that step and in the order the edits were made. It is checked now (valid shape,
+   * target known to the model); on error nothing is queued. Applied edits are recorded as
+   * [[InterventionEvent]]s, so the run replays exactly.
+   */
+  def intervene(iv: Intervention): Either[String, Unit] =
+    iv.validate.toLeft(()).flatMap(_ => model.accepts(iv)).map { _ =>
+      pendingInterventions = pendingInterventions :+ iv
+    }
 
   /**
    * Changes parameters from the next step on. Values are validated through the model's schema
@@ -212,6 +234,25 @@ final class Run[P, S] private[run] (
       current = change(pending)
       recorded = recorded :+ ParamEvent(n, pending)
       pending = VectorMap.empty
+    while nextScheduledIntervention < scheduledInterventions.size &&
+      scheduledInterventions(nextScheduledIntervention).step == n
+    do
+      val iv = scheduledInterventions(nextScheduledIntervention).intervention
+      model.intervene(state, current, iv) match
+        case Right(()) => recordedInterventions = recordedInterventions :+ InterventionEvent(n, iv)
+        case Left(error) =>
+          throw new IllegalStateException(s"invalid intervention before step $n: $error")
+      nextScheduledIntervention += 1
+    if pendingInterventions.nonEmpty then
+      val queued = pendingInterventions
+      pendingInterventions = Vector.empty
+      queued.foreach { iv =>
+        model.intervene(state, current, iv) match
+          case Right(()) =>
+            recordedInterventions = recordedInterventions :+ InterventionEvent(n, iv)
+            refusal = None
+          case Left(error) => refusal = Some(error)
+      }
 
   private def change(values: Map[String, Double]): P =
     model.params.withOverrides(current, values) match
@@ -279,6 +320,10 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
   def events(es: Seq[ParamEvent]): RunBuilder[P, S] =
     new RunBuilder(cfg.copy(events = es.toVector.sortBy(_.step)))
 
+  /** Interventions to apply before given steps, as recorded by an earlier run. */
+  def interventions(es: Seq[InterventionEvent]): RunBuilder[P, S] =
+    new RunBuilder(cfg.copy(interventions = es.toVector.sortBy(_.step)))
+
   def build(): Run[P, S] =
     cfg.stepping.validate.foreach(error => throw new IllegalArgumentException(error))
     if !cfg.model.supports(cfg.stepping) then
@@ -292,6 +337,13 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
     val names = cfg.probes.map(_.name)
     require(names.distinct.size == names.size, s"duplicate probe names: ${names.mkString(", ")}")
     require(cfg.events.forall(_.step >= 0), "parameter events must have non-negative steps")
+    cfg.interventions.foreach { e =>
+      require(e.step >= 0, "interventions must have non-negative steps")
+      e.intervention.validate.orElse(cfg.model.accepts(e.intervention).left.toOption).foreach {
+        error =>
+          throw new IllegalArgumentException(s"invalid intervention at step ${e.step}: $error")
+      }
+    }
     cfg.model.check(cfg.params, cfg.stepping).left.foreach { error =>
       throw new IllegalArgumentException(s"parameters rejected by '${cfg.model.id}': $error")
     }
@@ -312,7 +364,8 @@ final class RunBuilder[P, S] private (cfg: RunBuilder.Config[P, S]):
       cfg.seed,
       cfg.probes,
       cfg.sampleEvery,
-      cfg.events
+      cfg.events,
+      cfg.interventions
     )
 
 object RunBuilder:
@@ -323,7 +376,8 @@ object RunBuilder:
       seed: Long,
       probes: Vector[Probe[S]],
       sampleEvery: Double,
-      events: Vector[ParamEvent]
+      events: Vector[ParamEvent],
+      interventions: Vector[InterventionEvent] = Vector.empty
   )
 
   private[run] def of[P](model: Model[P]): RunBuilder[P, model.State] =

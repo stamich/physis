@@ -36,11 +36,13 @@ class LabScreenshotSuite extends LabSuite:
         Catalog.lorenz -> 15.0,
         Catalog.pendulum -> 8.0,
         Catalog.grayScott -> 4000.0, // time is measured in steps
-        Catalog.boids -> 10.0
+        Catalog.boids -> 10.0,
+        Catalog.wave -> 120.0 // time is measured in time units, 2 steps each
       )
       for (model, seconds) <- shots do
         LabFx.onFx(window.open(model.id))
         if model eq Catalog.grayScott then LabFx.onFx(window.applyPreset("Coral"))
+        if model eq Catalog.wave then LabFx.onFx(window.applyPreset("Double slit"))
         LabFx.await(s"${model.id} reached time $seconds", timeoutMs = 60_000)(
           LabFx.onFx(window.loop.flatMap(_.snapshot).exists(_.time >= seconds))
         )

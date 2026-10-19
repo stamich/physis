@@ -55,3 +55,20 @@ object HeatmapRaster:
         val x = (v - lo) * scale + 0.5
         out(k) = lut(if x <= 0.0 then 0 else if x >= 255.0 then 255 else x.toInt)
       k += 1
+
+  /** Packed value of the flat grey that overlay cells (walls) are drawn in. */
+  val OverlayGrey: Int = 0xff707070
+
+  /**
+   * Draws the cells of `mask` that are 1 or more in [[OverlayGrey]] over `out`, which holds the
+   * pixels of the field of the same size.
+   *
+   * @param mask   `nx * ny` values starting at `offset`
+   * @param out    at least `nx * ny` long
+   */
+  def overlay(mask: Array[Double], offset: Int, nx: Int, ny: Int, out: Array[Int]): Unit =
+    val n = nx * ny
+    var k = 0
+    while k < n do
+      if mask(offset + k) >= 1.0 then out(k) = OverlayGrey
+      k += 1

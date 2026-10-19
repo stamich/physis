@@ -4,6 +4,8 @@
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
 import org.gradle.api.tasks.scala.ScalaCompile
 
 plugins {
@@ -70,6 +72,20 @@ testing {
 // slowTest sees everything the unit tests see (munit, test-only project dependencies).
 configurations.matching { it.name == "slowTestImplementation" }.configureEach {
     extendsFrom(configurations.getByName("testImplementation"))
+}
+
+// The slow suites measure speed (steps per second, cells per second), so they must not compete
+// for the CPU with each other: at most one slowTest task runs at a time, whatever
+// org.gradle.parallel says.
+abstract class SlowTestLimiter : BuildService<BuildServiceParameters.None>
+
+val slowTestLimiter =
+    gradle.sharedServices.registerIfAbsent("slowTestLimiter", SlowTestLimiter::class.java) {
+        maxParallelUsages.set(1)
+    }
+
+tasks.matching { it.name == "slowTest" && it is Test }.configureEach {
+    usesService(slowTestLimiter)
 }
 
 tasks.withType<Test>().configureEach {

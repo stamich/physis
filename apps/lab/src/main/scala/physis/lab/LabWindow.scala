@@ -23,6 +23,7 @@ import physis.core.live.Command
 import physis.fx.{
   Fx,
   HeatmapRenderer,
+  Paintable,
   ParamPanel,
   ParticlesRenderer,
   PresetPicker,
@@ -34,6 +35,7 @@ import physis.fx.{
   SeedBar,
   StatsOverlay,
   Theme,
+  ToolBox,
   TrajectoryRenderer
 }
 import physis.view.{Direction, View}
@@ -114,7 +116,10 @@ final class LabWindow(
         val result = LabManifests.save(r.session.live, path)
         val text = result match
           case Right(m) =>
-            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, ${m.events.size} parameter changes"
+            val strokes = m.interventions.size
+            val painted = if strokes == 1 then "1 stroke" else s"$strokes strokes"
+            s"Saved ${path.getFileName}: ${m.steps.getOrElse(0L)} steps, " +
+              s"${m.events.size} parameter changes, $painted"
           case Left(error) => error
         status.setText(text)
         result
@@ -175,11 +180,21 @@ final class LabWindow(
     )
     for case h: HeatmapRenderer <- renderers do
       h.onCell = c => cell.setText(c.fold("")(_.text(h.sliceName)))
+    val paintables = renderers.collect { case p: Paintable => p }
+    var box: ToolBox = null
+    if session.tools.nonEmpty && paintables.nonEmpty then
+      box = new ToolBox(
+        session.tools.map(_.spec),
+        () => if box != null then wireTools(session, box, paintables)
+      )
     var lastStep = -1L
     var lastParams: AnyRef = null
     loop.onFrame { _ =>
       loop.snapshot.foreach { s =>
         controls.refresh(s)
+        if box != null then
+          box.setStrokes(s.interventions)
+          if s.paramValues ne lastParams then wireTools(session, box, paintables)
         // after a reset or a restart the run is back at its initial parameters: show them
         if s.step < lastStep then
           panel.discardEdits()
@@ -200,6 +215,7 @@ final class LabWindow(
       val presetPicker = new PresetPicker(session.presets, p => applyPreset(p.name))
       parts += presetPicker.node
     parts += scroll
+    if box != null then parts += box.node
     if session.usesSeed then parts += new SeedBar(seed, s => reseed(s)).node
     parts += controls.node
     side.getChildren.setAll(parts.result()*)
@@ -211,7 +227,9 @@ final class LabWindow(
       controls,
       renderers.collect {
         case h: HeatmapRenderer => h
-      }
+      },
+      Option(box),
+      paintables
     ))
     picker.getSelectionModel.select(models.indexOf(model))
     status.setText("")
@@ -219,10 +237,33 @@ final class LabWindow(
     session.live.start()
     loop.start()
 
+  /**
+   * Connects the pointer tools to the session: the selected tool and the box's radius and value
+   * decide what a dab means, and every dab becomes one [[Command.Intervene]].
+   */
+  private def wireTools(session: LabSession, box: ToolBox, paintables: Seq[Paintable]): Unit =
+    val tool = box.selected.flatMap(spec => session.tools.find(_.spec == spec))
+    val wrap = session.wraps(currentParams())
+    for p <- paintables do
+      tool.foreach(t => p.radiusRange = t.spec.radiusRange)
+      p.setBrush(tool.isDefined, box.radius)
+      p.setWrap(wrap, wrap)
+      p.onRadius = r => box.setRadius(r)
+      p.onStroke = batch =>
+        for t <- tool; dab <- batch.dabs do
+          val iv = t.make(dab, box.radius, box.value, batch.secondary)
+          session.live.send(Command.Intervene(iv))
+
+  /** The renderers of the current session that the pointer can paint on. */
+  def paintables: Seq[Paintable] = running.toSeq.flatMap(_.paintables)
+
+  /** The tool box of the current session, if the model has tools. */
+  def toolBox: Option[ToolBox] = running.flatMap(_.toolBox)
+
   /** Applies the preset called `name` of the current model as one parameter change. */
   def applyPreset(name: String): Unit =
     for r <- running; preset <- r.session.presets.find(_.name == name) do
-      r.session.live.send(Command.SetParams(preset.values))
+      r.session.live.send(r.session.model.presetCommand(preset, currentParams()))
 
   /** Starts the current run again with `newSeed`; the parameters stay as they are. */
   def reseed(newSeed: Long): Unit =
@@ -253,15 +294,21 @@ final class LabWindow(
     }
     running = None
 
-  /** Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed. */
+  /**
+   * Keyboard shortcuts: Space pause/resume, Right single step, R reset, + / - speed, B tool on or
+   * off. They are ignored while a stroke is being dragged.
+   */
   def installShortcuts(scene: Scene): Unit =
     scene.addEventFilter(KeyEvent.KEY_PRESSED, (e: KeyEvent) => shortcut(e))
 
   private def shortcut(e: KeyEvent): Unit =
     val typing = Option(e.getTarget).exists(_.isInstanceOf[TextInputControl])
     if !typing then
-      for r <- running do
+      for r <- running if !r.paintables.exists(_.stroking) do
         e.getCode match
+          case KeyCode.B if r.toolBox.isDefined =>
+            r.toolBox.foreach(_.toggle())
+            e.consume()
           case KeyCode.SPACE =>
             r.controls.togglePause()
             e.consume()
@@ -288,7 +335,9 @@ object LabWindow:
       loop: RenderLoop,
       panel: ParamPanel,
       controls: RunControls,
-      heatmaps: Seq[HeatmapRenderer]
+      heatmaps: Seq[HeatmapRenderer],
+      toolBox: Option[ToolBox],
+      paintables: Seq[Paintable]
   )
 
   /** The node for a view and the renderers inside it; layouts split their area equally. */
