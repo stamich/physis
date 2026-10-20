@@ -1,6 +1,7 @@
 package physis.models.boids
 
 import physis.core.run.Physis
+import physis.verify.SpeedReport
 
 /** 2 000 boids must step fast enough for the Lab's 20x speed (1 200 steps/s needs more). */
 class ThroughputSuite extends munit.FunSuite:
@@ -24,6 +25,7 @@ class ThroughputSuite extends munit.FunSuite:
       steps / ((System.nanoTime() - start) / 1e9)
     }
     val best = rates.max
+    println(SpeedReport.record("boids 2000 steps", best, "steps/s"))
     assert(
       best >= 500.0,
       f"best $best%.0f steps per second (windows: ${rates.map(r => f"$r%.0f").mkString(", ")})"

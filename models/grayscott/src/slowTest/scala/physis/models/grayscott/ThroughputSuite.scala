@@ -1,6 +1,7 @@
 package physis.models.grayscott
 
 import physis.core.run.Physis
+import physis.verify.SpeedReport
 
 /**
  * The Lab runs Gray-Scott at up to 4 000 steps/s on its 256 x 256 grid, which is about 260
@@ -26,5 +27,6 @@ class ThroughputSuite extends munit.FunSuite:
       cells * steps / ((System.nanoTime() - start) / 1e9)
     }.sorted
     val median = rates(2)
+    println(SpeedReport.record("gray-scott 256x256 cell updates", median / 1e6, "million/s"))
     assert(median >= 15e6, f"median ${median / 1e6}%.1f million cell updates per second")
   }
