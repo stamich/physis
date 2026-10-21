@@ -39,7 +39,9 @@ final class Field2D(val grid: Grid2D, val data: Array[Double]):
 
   /** Copies all values of `other`, halo included; both fields must have the same shape. */
   def copyFrom(other: Field2D): Unit =
-    require(other.grid == grid, s"shape mismatch: ${other.grid} vs $grid")
+    // No require(..., s"...") here: its by-name message would allocate a closure on every call.
+    if other.grid != grid then
+      throw new IllegalArgumentException(s"shape mismatch: ${other.grid} vs $grid")
     System.arraycopy(other.data, 0, data, 0, data.length)
 
   /** Sum of the interior, compensated (Neumaier) so that long sums keep their last digits. */

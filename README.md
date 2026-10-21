@@ -19,7 +19,11 @@ lay and follow a trail, the first model where agents and a field act on each oth
 sweeps** that run a grid of whole runs on all cores with the same results for any number of
 threads, and **image export** with an own PNG writer: frames, montages and File → Save image. Milestone
 0.5.1 adds **physis-cli**, the command line (`apps/cli`) for runs, frames, sweeps, montages and
-replays with a digest check.
+replays with a digest check. Milestone 0.6.0 adds **fluids**: incompressible flow on a staggered
+grid with a pressure projection, checked against the lid-driven cavity of Ghia et al. and the
+vortex street behind a cylinder, with dye and tracer particles, painted walls and pushes, a Lab
+entry, sweeps over the viscosity (a Reynolds scan), and **animated PNG** export
+(`physis-cli animate`).
 
 ## Modules
 
@@ -35,6 +39,7 @@ replays with a digest check.
 | `models/boids` | Boids and the Vicsek model on a periodic world |
 | `models/wave` | damped wave equation with walls, a source, reflective, free, periodic and absorbing edges |
 | `models/physarum` | Physarum agents on a trail, with presets for networks, meshes and spots |
+| `models/fluid` | incompressible flow on a staggered grid: cavity, cylinder wake, smoke, vortex pair |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -53,7 +58,7 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 ./gradlew build                 # compile, unit tests, formatting check
 ./gradlew slowTest              # long-running validation (Lyapunov exponent, ...)
 
-# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves and Physarum, live
+# Physis Lab: Lorenz, the double pendulum, Gray–Scott, Boids, waves, Physarum and fluids, live
 ./gradlew :apps:lab:run
 
 # Lorenz attractor as CSV
@@ -66,6 +71,9 @@ Requirements: JDK 22 (Gradle provisions it automatically if it is missing).
 # A 5 x 5 patch of the Gray–Scott map as one picture, and Physarum frames
 ./gradlew :apps:cli:run --args="montage map.png --model gray-scott --until 8000 --param nx=128 --param ny=128 --sweep F=0.02:0.06:5 --sweep k=0.05:0.07:5"
 ./gradlew :apps:cli:run --args="frames out --model physarum --steps 600 --every 60 --scale 3"
+
+# The lid-driven cavity as an animated PNG
+./gradlew :apps:cli:run --args="animate cavity.png --model fluid --preset Cavity --steps 600 --every 10 --scale 3"
 
 # Chaotic double pendulum with adaptive steps; save the manifest, then replay it
 ./gradlew :apps:cli:run --args="run --model double-pendulum --adaptive 1e-9 --until 10 --manifest run.json"

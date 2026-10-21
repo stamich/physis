@@ -36,15 +36,19 @@ object Cli:
   private val time = Spec(Set("--until", "--steps", "--sample-every", "--dt", "--adaptive"))
   private val image = Spec(Set("--every", "--scale"), Set("--no-color-bar", "--compress"))
 
-  private val runSpec = model ++ time ++ Spec(Set("--manifest"))
-  private val framesSpec = model ++ time ++ image
+  private val strokes = Spec(Set("--stroke", "--manifest"))
+  private val movie = Spec(Set("--fps", "--loops"))
+
+  private val runSpec = model ++ time ++ strokes
+  private val framesSpec = model ++ time ++ image ++ strokes
+  private val animateSpec = framesSpec ++ movie
   private val sweepSpec = model ++ time ++
     Spec(
       Set("--sweep", "--threads", "--out", "--jsonl", "--manifests", "--montage", "--scale"),
       Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast")
     )
   private val montageSpec = sweepSpec ++ Spec(Set("--montage-columns"))
-  private val replaySpec = framesSpec ++ Spec(Set("--frames"))
+  private val replaySpec = animateSpec ++ Spec(Set("--frames", "--animate"))
 
   val Usage: String =
     """Usage: physis-cli <command> [options]
@@ -52,6 +56,7 @@ object Cli:
       |Commands
       |  run                 run a model and print its probes as CSV
       |  frames <dir>        write numbered PNGs of a run into <dir>
+      |  animate <file>      write the frames of a run as one animated PNG
       |  sweep               run a grid of parameters, one run per point, and print a CSV
       |  montage <png>       like sweep, and tile the final images of all points into <png>
       |  replay <manifest>   re-run a manifest, with its changes and strokes
@@ -64,7 +69,7 @@ object Cli:
       |Exit codes: 0 done, 1 the run or a sweep point failed, 2 the command line is wrong.""".stripMargin
 
   private val Common: String =
-    """  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum
+    """  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid
       |                         (default: lorenz)
       |  --preset <name>        start from a preset of the model; --param is applied after it
       |  --param <name=value>   override a model parameter (repeatable)
@@ -74,6 +79,12 @@ object Cli:
       |  --sample-every <dt>    probe sampling interval (default: 0.1)
       |  --dt <dt>              fixed step (default: the model's own)
       |  --adaptive <tol>       Dormand-Prince with rtol = atol = tol instead of fixed steps""".stripMargin
+
+  private val Strokes: String =
+    """  --stroke <spec>        a stroke at a step, recorded in the manifest (repeatable):
+      |                         STEP:brush:TARGET:X:Y:R:OP:VALUE (OP is set, add or erase),
+      |                         STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE, STEP:disturb:X:Y:R:STRENGTH
+      |  --manifest <path>      write the manifest of the run, with the strokes, to <path>""".stripMargin
 
   private val Pictures: String =
     """  --scale <n>            pixels per cell, 1 to 16 (default: 1)
@@ -92,12 +103,18 @@ object Cli:
   /** The text of `physis-cli <command> --help`. */
   def usageOf(command: String): String = command match
     case "run" =>
-      s"Usage: physis-cli run [options]\n\nPrints the probes of a run as CSV.\n$Common\n" +
-        "  --manifest <path>      write the run manifest to <path>"
+      s"Usage: physis-cli run [options]\n\nPrints the probes of a run as CSV.\n$Common\n$Strokes"
     case "frames" =>
       s"Usage: physis-cli frames <dir> [options]\n\nNumbered PNGs of the first image of the view " +
-        s"(gray-scott, wave, physarum); one path per line.\n$Common\n" +
+        s"(gray-scott, wave, physarum, fluid); one path per line.\n$Common\n$Strokes\n" +
         "  --every <n>            steps between frames (default: a tenth of the run)\n" +
+        s"  --no-color-bar         leave out the colour scale at the right\n$Pictures"
+    case "animate" =>
+      s"Usage: physis-cli animate <file> [options]\n\nThe frames of a run as one animated PNG; " +
+        s"the file name is printed.\n$Common\n$Strokes\n" +
+        "  --every <n>            steps between frames (default: a tenth of the run)\n" +
+        "  --fps <n>              frames per second, 1 to 65535 (default: 12)\n" +
+        "  --loops <n>            times it plays, 0 for ever (default: 0)\n" +
         s"  --no-color-bar         leave out the colour scale at the right\n$Pictures"
     case "sweep" =>
       s"Usage: physis-cli sweep --sweep <axis> [--sweep <axis>...] [options]\n\n" +
@@ -109,10 +126,14 @@ object Cli:
         s"along a row.\n$Common\n$SweepOptions\n" +
         s"  --montage-columns <n>  tiles per row instead\n$Pictures"
     case "replay" =>
-      "Usage: physis-cli replay <manifest> [--frames <dir> --every <n> --scale <n> ...]\n\n" +
+      "Usage: physis-cli replay <manifest> [--frames <dir> | --animate <file>] [options]\n\n" +
         "Re-runs a manifest with its parameter changes and strokes and prints the CSV.\n" +
-        s"  --frames <dir>         write frames instead\n  --every <n>, --scale <n>, " +
-        "--no-color-bar, --compress  as for frames"
+        "  --frames <dir>         write frames instead\n" +
+        "  --animate <file>       write an animated PNG instead\n" +
+        "  --every <n>, --scale <n>, --no-color-bar, --compress, --fps <n>, --loops <n>  " +
+        "as for animate\n" +
+        "  --stroke <spec>        more strokes (they end the digest check), --manifest <path> " +
+        "records the result"
     case "list" => "Usage: physis-cli list\n\nLists the models with their parameters."
     case "describe" =>
       "Usage: physis-cli describe <model>\n\nParameters with range and unit, presets, probes, " +
@@ -130,6 +151,10 @@ object Cli:
     case "frames" :: rest =>
       positional("frames", "a directory", rest).flatMap { (dir, more) =>
         checked("frames", more, framesSpec).map(a => Plan.Engine("--frames" :: dir :: a))
+      }
+    case "animate" :: rest =>
+      positional("animate", "a PNG file", rest).flatMap { (file, more) =>
+        checked("animate", more, animateSpec).map(a => Plan.Engine("--animate" :: file :: a))
       }
     case "sweep" :: rest => sweep("sweep", rest, sweepSpec).map(a => Plan.Engine(progress(a)))
     case "montage" :: rest =>
@@ -155,7 +180,7 @@ object Cli:
     else "--progress" :: args
 
   val Commands: Vector[String] =
-    Vector("run", "frames", "sweep", "montage", "replay", "list", "describe")
+    Vector("run", "frames", "animate", "sweep", "montage", "replay", "list", "describe")
 
   private def sweep(command: String, args: List[String], spec: Spec): Either[String, List[String]] =
     checked(command, args, spec).flatMap { a =>

@@ -36,6 +36,35 @@ class CatalogSuite extends munit.FunSuite:
       assert(iv.isInstanceOf[Intervention.Brush])
   }
 
+  test("the fluid offers smoke, pushes and walls whose strokes the model accepts") {
+    import physis.core.run.{Intervention, Physis}
+    import physis.models.fluid.Fluid
+    assertEquals(
+      Catalog.fluid.tools.map(_.spec.name),
+      Vector("Smoke", "Push sideways", "Push up", "Wall", "Erase wall")
+    )
+    assert(Catalog.fluid.wraps(Map("edge" -> 0.0)))
+    assert(!Catalog.fluid.wraps(Map("edge" -> 1.0)))
+    val run = Physis
+      .model(Fluid)
+      .stepping(Fluid.stepping)
+      .overrides(Map("nx" -> 64.0, "ny" -> 64.0))
+      .build()
+    for tool <- Catalog.fluid.tools; secondary <- Seq(false, true) do
+      val iv = tool.make(physis.view.Dab(10.0, 12.0), 5.0, 1.0, secondary)
+      assert(run.intervene(iv).isRight, s"${tool.spec.name}: $iv")
+    val pushes = Catalog.fluid.tools.filter(_.spec.name.startsWith("Push")).map(_.make(
+      physis.view.Dab(1.0, 1.0),
+      5.0,
+      1.0,
+      true
+    ))
+    pushes.foreach {
+      case Intervention.Pulse(_, _, _, _, amplitude) => assert(amplitude < 0.0)
+      case other => fail(s"not a pulse: $other")
+    }
+  }
+
   test("the Lorenz view stacks the attractor above the coordinates") {
     Catalog.lorenz.open(1L, startPaused = true).view match
       case View.Layout(Seq(_: View.Trajectory, _: View.Plot), Direction.Vertical) => ()
@@ -230,6 +259,62 @@ class LabWindowSuite extends LabSuite:
         assert(range._1 < range._2 || range._1 == range._2)
         assert(LabFx.onFx(window.saveImage(file, 0)).isLeft)
         assert(LabFx.onFx(window.saveImage(file, 9)).isLeft)
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("a fluid preset restarts with its cylinder and dye painted at step 0 and tracers seeded") {
+    withWindow(Catalog.fluid.id) { window =>
+      LabFx.onFx(window.applyPreset("Cylinder wake"))
+      LabFx.await("wake started")(latest(window)(s =>
+        s.param("edge") == 2.0 && s.param("tracers") == 3000.0 && s.interventions > 10
+      ))
+      val manifest = LabFx.onFx(window.session.get.live.manifest())
+      assert(manifest.interventions.forall(_.step == 0L), "painting happened after step 0")
+      val slices = LabFx.onFx(window.loop.get.snapshot.get.slices.map(_.name))
+      assertEquals(slices, Vector("dye", "vorticity", "speed", "wall", "x", "y"))
+    }
+  }
+
+  fxTest("Save image of the wake has the cylinder in flat grey, the tracers and a colour scale") {
+    withWindow(Catalog.fluid.id) { window =>
+      LabFx.onFx(window.applyPreset("Cylinder wake"))
+      LabFx.await("wake drawn")(
+        latest(window)(_.step > 20) && LabFx.onFx(window.heatmaps.head.gridSize == (192, 72))
+      )
+      val file = java.nio.file.Files.createTempFile("physis-lab-wake", ".png")
+      try
+        val (pixels, result) = LabFx.onFx {
+          val h = window.heatmaps.head
+          (h.lastPixels.clone(), window.saveImage(file, 2))
+        }
+        assert(result.isRight, result.toString)
+        val image = javax.imageio.ImageIO.read(file.toFile)
+        assertEquals(image.getHeight, 72 * 2)
+        assert(image.getWidth > 192 * 2, s"no colour scale: ${image.getWidth} wide")
+        for y <- 0 until 72 * 2; x <- 0 until 192 * 2 do
+          assertEquals(image.getRGB(x, y), pixels((y / 2) * 192 + x / 2) | 0xff000000, s"($x, $y)")
+        val grey = pixels.count(_ == physis.view.HeatmapRaster.OverlayGrey)
+        assert(grey > 100 && grey < 250, s"$grey cells of the cylinder")
+      finally
+        val _ = java.nio.file.Files.deleteIfExists(file)
+    }
+  }
+
+  fxTest("a fluid session started from a preset is saved and replays to the same digest") {
+    withWindow(Catalog.fluid.id) { window =>
+      LabFx.onFx(window.applyPreset("Smoke plume"))
+      LabFx.await("plume running")(latest(window)(s => s.param("buoyancy") == 0.1 && s.step > 60))
+      LabFx.onFx(window.controls.foreach(_.togglePause()))
+      LabFx.await("paused")(latest(window)(_.paused))
+      val file = java.nio.file.Files.createTempFile("physis-lab-plume", ".json")
+      try
+        val saved =
+          LabFx.onFx(LabManifests.save(window.session.get.live, file)).fold(e => fail(e), identity)
+        assert(saved.interventions.nonEmpty)
+        val report = LabManifests.replay(file, Catalog.registry).fold(e => fail(e), identity)
+        assertEquals(report.matches, Some(true), report.summary)
       finally
         val _ = java.nio.file.Files.deleteIfExists(file)
     }

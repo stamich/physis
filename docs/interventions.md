@@ -32,6 +32,7 @@ A model decides what it accepts:
 | --- | --- |
 | Gray–Scott | `Brush` on `u` or `v`; values are clamped to [0, 1] |
 | Waves | `Brush` on `wall` (0 or 1) and on `u`; `Pulse` on `u` |
+| Fluids | `Brush` on `wall` and `dye`; `Pulse` on `u`, `v` (a push) and `dye` |
 | Boids | `Disturb` with a strength in (0, 2] |
 | Lorenz, double pendulum | none |
 

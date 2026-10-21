@@ -7,7 +7,7 @@ import scala.collection.immutable.VectorMap
 import scala.util.control.NonFatal
 
 import physis.core.{Model, Probe, Stepping}
-import physis.core.run.{Physis, Run, RunResult}
+import physis.core.run.{InterventionEvent, Physis, Run, RunResult}
 
 /**
  * What every run of a sweep has in common: the model, how it is stepped and probed, how long it
@@ -15,6 +15,8 @@ import physis.core.run.{Physis, Run, RunResult}
  *
  * @param sampleEvery probe sampling interval; a sweep only reports the last sample, so a large
  *                    value (the default is `until`) saves memory
+ * @param interventions strokes every run gets at the recorded steps, for example what a preset
+ *                      paints; they are part of each point's manifest
  */
 final case class SweepSetup[P, S](
     model: Model.Aux[P, S],
@@ -23,7 +25,8 @@ final case class SweepSetup[P, S](
     until: Double,
     sampleEvery: Double,
     params: Map[String, Double] = Map.empty,
-    seed: Long = 0L
+    seed: Long = 0L,
+    interventions: Vector[InterventionEvent] = Vector.empty
 )
 
 /** What one finished run reports: where it ended and the last value of each probe. */
@@ -99,6 +102,7 @@ object Sweep:
               .stepping(setup.stepping)
               .seed(point.seed.getOrElse(setup.seed))
               .sampleEvery(setup.sampleEvery)
+              .interventions(setup.interventions)
               .probe(setup.probes(p)*)
               .build()
             val result = run.runUntil(setup.until)

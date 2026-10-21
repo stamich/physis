@@ -6,6 +6,7 @@ import physis.core.param.{ParamSchema, Preset}
 import physis.core.run.{Disc, Intervention, ModelRegistry, Op, Physis}
 import physis.fx.{RunControls, ToolSpec}
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
+import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
 import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
 import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
@@ -296,9 +297,62 @@ object Catalog:
     wrap = _ => true
   )
 
+  /**
+   * One step is a quarter of a time unit. A dab has no direction, so pushing is two tools, one
+   * for each component of the velocity; the right button pushes the other way.
+   */
+  val fluid: LabModel = new ModelEntry[FluidParams, FluidState](
+    "Fluids",
+    Fluid,
+    Fluid.stepping,
+    Fluid.probes,
+    FluidViews.lab,
+    FluidState.stateExport,
+    FluidPresets.all.map(p => Preset(p.name, p.params, p.doc)),
+    SpeedRange(5.0, 600.0, 60.0, s => f"$s%.0f steps/s"),
+    tools = Vector(
+      LabTool(
+        ToolSpec("Smoke", Some("dye"), 1.0, (0.1, 1.0), (1.0, 40.0), 5.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush(
+            "dye",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            v
+          )
+      ),
+      LabTool(
+        ToolSpec("Push sideways", Some("speed"), 1.0, (0.1, 3.0), (2.0, 40.0), 8.0),
+        (d, r, v, secondary) =>
+          Intervention.Pulse("u", d.x, d.y, math.max(1.0, r / 2.5), if secondary then -v else v)
+      ),
+      LabTool(
+        ToolSpec("Push up", Some("speed"), 1.0, (0.1, 3.0), (2.0, 40.0), 8.0),
+        (d, r, v, secondary) =>
+          Intervention.Pulse("v", d.x, d.y, math.max(1.0, r / 2.5), if secondary then -v else v)
+      ),
+      LabTool(
+        ToolSpec("Wall", None, 0.0, (0.0, 0.0), (1.0, 40.0), 3.0),
+        (d, r, _, secondary) =>
+          Intervention.Brush(
+            "wall",
+            Disc(d.x, d.y, r),
+            if secondary then Op.Erase else Op.Assign,
+            1.0
+          )
+      ),
+      LabTool(
+        ToolSpec("Erase wall", None, 0.0, (0.0, 0.0), (1.0, 40.0), 6.0),
+        (d, r, _, _) => Intervention.Brush("wall", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      )
+    ),
+    wrap = p => p.getOrElse("edge", 0.0) == 0.0,
+    painted = FluidPresets.all.map(p => p.name -> p.interventions).toMap
+  )
+
   /** In menu order; the first one opens at start. */
-  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave, physarum)
+  val models: Vector[LabModel] = Vector(lorenz, pendulum, grayScott, boids, wave, physarum, fluid)
 
   /** Models by id, for replaying manifests. */
   val registry: ModelRegistry =
-    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave, Physarum)
+    ModelRegistry.of(Lorenz.model, Pendulum.model, GrayScott, Boids, Wave, Physarum, Fluid)

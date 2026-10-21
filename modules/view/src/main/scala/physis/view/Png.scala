@@ -14,11 +14,11 @@ import java.util.zip.{Adler32, CRC32, Deflater}
  * the zlib the JVM runs on.
  */
 object Png:
-  private val Signature: Array[Byte] =
+  private[view] val Signature: Array[Byte] =
     Array(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a).map(_.toByte)
 
   /** The largest block a stored deflate block can hold. */
-  private val StoredBlock = 0xffff
+  private[view] val StoredBlock = 0xffff
 
   /** The file as bytes; `pixels` holds `width * height` ARGB values, row 0 first. */
   def encode(
@@ -30,12 +30,29 @@ object Png:
     require(width >= 1 && height >= 1, s"image size must be positive, got $width x $height")
     val count = width.toLong * height
     require(pixels.length >= count, s"$width x $height needs $count pixels, got ${pixels.length}")
-    var opaque = true
-    var i = 0
-    while opaque && i < count do
-      if (pixels(i) >>> 24) != 0xff then opaque = false
-      i += 1
+    val opaque = isOpaque(pixels, count)
     val bytesPerPixel = if opaque then 3 else 4
+    val raw = scanlines(pixels, width, height, bytesPerPixel)
+    val out = new ByteArrayOutputStream(raw.length + 1024)
+    out.write(Signature, 0, Signature.length)
+    chunk(out, "IHDR", header(width, height, if opaque then 2 else 6))
+    chunk(out, "IDAT", if compress then deflated(raw) else stored(raw))
+    chunk(out, "IEND", Array.emptyByteArray)
+    out.toByteArray
+
+  /** True if every one of the first `count` pixels has alpha 255. */
+  private[view] def isOpaque(pixels: Array[Int], count: Long): Boolean =
+    var i = 0
+    while i < count && (pixels(i) >>> 24) == 0xff do i += 1
+    i >= count
+
+  /** The scanlines of an image, each led by the filter type 0 (none), as PNG wants them. */
+  private[view] def scanlines(
+      pixels: Array[Int],
+      width: Int,
+      height: Int,
+      bytesPerPixel: Int
+  ): Array[Byte] =
     val rowBytes = 1 + width.toLong * bytesPerPixel
     require(rowBytes * height < Int.MaxValue / 2, s"a $width x $height image is too large")
     val raw = new Array[Byte]((rowBytes * height).toInt)
@@ -56,12 +73,7 @@ object Png:
         k += 1
         x += 1
       y += 1
-    val out = new ByteArrayOutputStream(raw.length + 1024)
-    out.write(Signature, 0, Signature.length)
-    chunk(out, "IHDR", header(width, height, if opaque then 2 else 6))
-    chunk(out, "IDAT", if compress then deflated(raw) else stored(raw))
-    chunk(out, "IEND", Array.emptyByteArray)
-    out.toByteArray
+    raw
 
   /** Writes the image to `path`, enlarged `factor` times (see [[scale]]). */
   def write(
@@ -96,7 +108,7 @@ object Png:
         y += 1
       out
 
-  private def header(width: Int, height: Int, colorType: Int): Array[Byte] =
+  private[view] def header(width: Int, height: Int, colorType: Int): Array[Byte] =
     val h = new Array[Byte](13)
     put(h, 0, width)
     put(h, 4, height)
@@ -104,13 +116,13 @@ object Png:
     h(9) = colorType.toByte
     h // compression, filter and interlace methods are 0
 
-  private def put(a: Array[Byte], at: Int, v: Int): Unit =
+  private[view] def put(a: Array[Byte], at: Int, v: Int): Unit =
     a(at) = (v >>> 24).toByte
     a(at + 1) = (v >>> 16).toByte
     a(at + 2) = (v >>> 8).toByte
     a(at + 3) = v.toByte
 
-  private def chunk(out: ByteArrayOutputStream, kind: String, data: Array[Byte]): Unit =
+  private[view] def chunk(out: ByteArrayOutputStream, kind: String, data: Array[Byte]): Unit =
     val length = new Array[Byte](4)
     put(length, 0, data.length)
     out.write(length, 0, 4)
@@ -125,7 +137,7 @@ object Png:
     out.write(tail, 0, 4)
 
   /** A zlib stream of uncompressed deflate blocks. */
-  private def stored(raw: Array[Byte]): Array[Byte] =
+  private[view] def stored(raw: Array[Byte]): Array[Byte] =
     val blocks = (raw.length + StoredBlock - 1) / StoredBlock
     val out = new Array[Byte](2 + raw.length + 5 * blocks + 4)
     out(0) = 0x78
@@ -147,7 +159,7 @@ object Png:
     put(out, pos, adler.getValue.toInt)
     out
 
-  private def deflated(raw: Array[Byte]): Array[Byte] =
+  private[view] def deflated(raw: Array[Byte]): Array[Byte] =
     val deflater = new Deflater(6)
     try
       deflater.setInput(raw)

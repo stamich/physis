@@ -44,3 +44,63 @@ object Sampler:
     val bottom = d(g.index(i0, j0)) * (1.0 - tx) + d(g.index(i1, j0)) * tx
     val top = d(g.index(i0, j1)) * (1.0 - tx) + d(g.index(i1, j1)) * tx
     bottom * (1.0 - ty) + top * ty
+
+  /**
+   * Linear interpolation of a field whose samples sit at `(i + ox, j + oy)` rather than at the
+   * cell centres, as the velocities of a staggered grid do (`u`: `ox = 0, oy = 0.5`).
+   *
+   * An axis that wraps has `periodX` cells (the samples at index `periodX` and above are copies
+   * and are not read); one that does not is clamped: outside the first and last sample the
+   * value of that sample is returned. The result reproduces a field that is linear in x and y
+   * exactly between the first and the last sample. No call allocates.
+   */
+  def bilinearAt(
+      f: Field2D,
+      x: Double,
+      y: Double,
+      ox: Double,
+      oy: Double,
+      periodX: Int,
+      periodY: Int,
+      wrapX: Boolean,
+      wrapY: Boolean
+  ): Double =
+    var gx = x - ox
+    var gy = y - oy
+    var i0 = 0
+    var i1 = 0
+    var tx = 0.0
+    if wrapX then
+      gx = wrap(gx, periodX)
+      val fi = math.floor(gx)
+      tx = gx - fi
+      i0 = wrapIndex(fi.toInt, periodX)
+      i1 = wrapIndex(i0 + 1, periodX)
+    else
+      val last = f.nx - 1
+      gx = math.max(0.0, math.min(last.toDouble, gx))
+      val fi = math.min(math.floor(gx), math.max(0, last - 1).toDouble)
+      tx = gx - fi
+      i0 = fi.toInt
+      i1 = math.min(i0 + 1, last)
+    var j0 = 0
+    var j1 = 0
+    var ty = 0.0
+    if wrapY then
+      gy = wrap(gy, periodY)
+      val fj = math.floor(gy)
+      ty = gy - fj
+      j0 = wrapIndex(fj.toInt, periodY)
+      j1 = wrapIndex(j0 + 1, periodY)
+    else
+      val last = f.ny - 1
+      gy = math.max(0.0, math.min(last.toDouble, gy))
+      val fj = math.min(math.floor(gy), math.max(0, last - 1).toDouble)
+      ty = gy - fj
+      j0 = fj.toInt
+      j1 = math.min(j0 + 1, last)
+    val g = f.grid
+    val d = f.data
+    val bottom = d(g.index(i0, j0)) * (1.0 - tx) + d(g.index(i1, j0)) * tx
+    val top = d(g.index(i0, j1)) * (1.0 - tx) + d(g.index(i1, j1)) * tx
+    bottom * (1.0 - ty) + top * ty
