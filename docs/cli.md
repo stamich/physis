@@ -19,7 +19,7 @@ The distribution needs a Java 22 or newer on the path. The examples below leave 
 | Command | What it does |
 | --- | --- |
 | `run` | runs a model and prints its probes as CSV |
-| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid) |
+| `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid, convection) |
 | `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`) |
 | `sweep` | one run per point of a grid, results in grid order, as CSV |
 | `montage <png>` | a sweep that also tiles the final images of all points into one PNG |
@@ -40,8 +40,9 @@ physis-cli replay run.json
 ## Parameters and presets
 
 `--param name=value` overrides a parameter. `--preset <name>` starts from a preset of the model
-(see `describe`; gray-scott, boids, physarum and fluid have them; a preset of the fluid also
-paints its walls and dye, and they are recorded in the manifest), and `--param` is applied after it, so
+(see `describe`; gray-scott, boids, physarum, fluid and convection have them; a preset of the
+fluid also paints its walls and dye, and a preset of convection its heat, and they are recorded in
+the manifest), and `--param` is applied after it, so
 a preset can be varied.
 
 ```bash
@@ -138,6 +139,19 @@ A point that failed leaves its tile empty.
 A preset that paints (the fluid's) is applied to every point, so a sweep over `viscosity` with
 `--preset "Cylinder wake"` is a Reynolds scan; sweeping `nx` or `ny` with such a preset is
 refused, because the painting is for one size. See [sweeps.md](sweeps.md).
+
+## Convection
+
+```bash
+physis-cli sweep --model convection --param nx=32 --param ny=16 --sweep rayleigh=1200,3000 --until 800 --sample-every 10 --out nu.csv
+physis-cli animate rolls.png --model convection --preset Rolls --param nx=64 --param ny=16 --steps 400 --every 100
+```
+
+The first command scans the Rayleigh number: at 1200 the `nusselt` column of the CSV stays at 1
+(heat only conducts) and at 3000 it rises well above 1 (the layer has formed rolls). The results are
+the same on any number of threads. The second animates a layer between periodic sides; a preset of
+convection paints its heat as ordinary strokes, and the manifest replays to the same digest and the
+same animation. The model and its checks are described in [models/convection.md](models/convection.md).
 
 ## Replay
 

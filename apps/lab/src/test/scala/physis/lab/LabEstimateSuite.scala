@@ -20,7 +20,9 @@ class LabEstimateSuite extends munit.FunSuite:
     (s, snapshot.get)
 
   test("the estimate of a file is its size to the byte, and its frames are exact") {
-    for (model, colorBar, scale) <- Seq((Catalog.fluid, true, 1), (Catalog.wave, false, 2)) do
+    for (model, colorBar, scale) <-
+        Seq((Catalog.fluid, true, 1), (Catalog.wave, false, 2), (Catalog.convection, true, 1))
+    do
       val (s, shot) = stepped(model, 12)
       try
         val options = AnimationOptions(every = 4, scale = scale, colorBar = colorBar)
@@ -77,7 +79,9 @@ class LabEstimateSuite extends munit.FunSuite:
   }
 
   test("every field model suggests a length that fits, whatever the session length") {
-    for m <- Seq(Catalog.grayScott, Catalog.wave, Catalog.physarum, Catalog.fluid) do
+    for m <-
+        Seq(Catalog.grayScott, Catalog.wave, Catalog.physarum, Catalog.fluid, Catalog.convection)
+    do
       for steps <- Seq(1L, 2L, 3L, 10L, 99L, 800L, 5000L, 100000L) do
         val o = LabAnimations.suggest(steps, m.animationDefaults, cells = 256)
         val frames = LabAnimations.frameCount(steps, o)
@@ -85,6 +89,14 @@ class LabEstimateSuite extends munit.FunSuite:
         assert(frames <= LabAnimations.MaxFrames, s"${m.id} $steps: $frames frames")
         if steps >= 2L then assert(frames >= 2, s"${m.id} $steps: one frame")
         assertEquals(LabAnimations.check(steps, o), None, s"${m.id} $steps")
+  }
+
+  test("the layer suggests a picture every 100 steps: 20 000 steps are 10 seconds of film") {
+    val o = LabAnimations.suggest(20000L, Catalog.convection.animationDefaults, cells = 96)
+    assertEquals((o.every, o.fps), (100L, 20))
+    assertEquals(LabAnimations.frameCount(20000L, o), 201)
+    assertEquals(LabAnimations.frameCount(20000L, o) / o.fps, 10)
+    assertEquals(LabAnimations.check(20000L, o), None)
   }
 
   test("the fluid suggests 20 pictures a second every 4 steps: 800 steps are 10 seconds") {

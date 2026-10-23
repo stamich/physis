@@ -28,7 +28,7 @@ project(":view").projectDir = file("modules/view")
 project(":fx").projectDir = file("modules/fx")
 project(":fields").projectDir = file("modules/fields")
 
-include(":models:lorenz", ":models:pendulum", ":models:grayscott", ":models:boids", ":models:wave", ":models:physarum", ":models:fluid")
+include(":models:lorenz", ":models:pendulum", ":models:grayscott", ":models:boids", ":models:wave", ":models:physarum", ":models:fluid", ":models:convection")
 include(":apps:cli")
 include(":examples")
 include(":apps:lab")
