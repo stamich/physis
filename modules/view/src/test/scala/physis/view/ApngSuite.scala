@@ -171,3 +171,57 @@ class ApngSuite extends munit.FunSuite:
     assert(refused(Apng.encode(frames, 8, 4, loops = -1)).contains("loops"))
     assert(refused(Apng.encode(frames.updated(1, new Array[Int](3)), 8, 4)).contains("frame 1"))
   }
+
+  private def streamed(
+      list: IndexedSeq[Array[Int]],
+      alpha: Boolean,
+      compress: Boolean = false
+  ): Array[Byte] =
+    val out = new java.io.ByteArrayOutputStream()
+    val w = new Apng.Writer(out, 8, 4, list.size, fps = 10, loops = 2, alpha, compress)
+    list.foreach(w.add)
+    assertEquals(w.written, list.size)
+    w.finish()
+    out.toByteArray
+
+  test("the streaming writer gives the bytes of encode for opaque and translucent frames") {
+    assert(java.util.Arrays.equals(
+      streamed(frames, alpha = false),
+      Apng.encode(frames, 8, 4, 10, 2)
+    ))
+    val clear = frames.map(_.map(_ & 0x80ffffff))
+    assert(java.util.Arrays.equals(streamed(clear, alpha = true), Apng.encode(clear, 8, 4, 10, 2)))
+    assert(
+      java.util.Arrays
+        .equals(streamed(frames, false, true), Apng.encode(frames, 8, 4, 10, 2, compress = true))
+    )
+  }
+
+  test("the streaming writer writes the header before any frame and refuses a wrong count") {
+    val out = new java.io.ByteArrayOutputStream()
+    val w = new Apng.Writer(out, 8, 4, 2)
+    val head = chunks(out.toByteArray).map(_.kind)
+    assertEquals(head, Vector("IHDR", "acTL"))
+    w.add(frames(0))
+    intercept[IllegalStateException](w.finish())
+    w.add(frames(1))
+    intercept[IllegalStateException](w.add(frames(2)))
+    w.finish()
+    w.finish() // twice is harmless
+    assertEquals(chunks(out.toByteArray).last.kind, "IEND")
+  }
+
+  test("the streaming writer refuses a short frame and a translucent pixel in an RGB file") {
+    val w = new Apng.Writer(new java.io.ByteArrayOutputStream(), 8, 4, 2)
+    assert(
+      intercept[IllegalArgumentException](w.add(new Array[Int](3))).getMessage.contains("frame 0")
+    )
+    val clear = frames(0).map(_ & 0x80ffffff)
+    assert(intercept[IllegalArgumentException](w.add(clear)).getMessage.contains("translucent"))
+    intercept[IllegalArgumentException](new Apng.Writer(
+      new java.io.ByteArrayOutputStream(),
+      8,
+      4,
+      0
+    ))
+  }

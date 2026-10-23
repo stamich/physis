@@ -13,7 +13,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
-import physis.view.{Dab, View}
+import physis.view.{Dab, Frames, View}
 
 /**
  * The speeds a model can run at, in simulated time per second.
@@ -60,6 +60,9 @@ trait LabModel:
   /** Whether the model has randomness, so that a seed field is useful. */
   def usesSeed: Boolean = false
 
+  /** What Save animation suggests for this model. */
+  def animationDefaults: AnimationDefaults = AnimationDefaults()
+
   /** Pointer tools; the tool box is shown when there are any. */
   def tools: Vector[LabTool] = Vector.empty
 
@@ -79,10 +82,18 @@ final class LabSession(
     val presets: Vector[Preset] = Vector.empty,
     val speedRange: SpeedRange = SpeedRange.Default,
     val usesSeed: Boolean = false,
-    val tools: Vector[LabTool] = Vector.empty
+    val tools: Vector[LabTool] = Vector.empty,
+    val exporter: Option[StateExport[?]] = None,
+    val animation: AnimationDefaults = AnimationDefaults()
 ):
   /** Whether strokes wrap across the border, given the current parameters. */
   def wraps(params: Map[String, Double]): Boolean = model.wraps(params)
+
+  /**
+   * Whether the session can make pictures of its state without a window (Save image, Save
+   * animation): it has a state exporter and its view holds a heatmap. The ODE models do not.
+   */
+  def hasImage: Boolean = exporter.isDefined && Frames.imageOf(view).isDefined
 
 /** A catalog entry for an ODE model. */
 final class OdeEntry[P](
@@ -124,9 +135,12 @@ final class ModelEntry[P, S](
     override val tools: Vector[LabTool] = Vector.empty,
     wrap: Map[String, Double] => Boolean = _ => false,
     painted: Map[String, (Int, Int) => Vector[Intervention]] = Map.empty,
-    seeded: Boolean = true
+    seeded: Boolean = true,
+    animation: AnimationDefaults = AnimationDefaults()
 ) extends LabModel:
   def id: String = model.id
+
+  override def animationDefaults: AnimationDefaults = animation
 
   override def usesSeed: Boolean = seeded
 
@@ -155,7 +169,9 @@ final class ModelEntry[P, S](
       presets,
       speedRange,
       usesSeed = seeded,
-      tools = tools
+      tools = tools,
+      exporter = Some(exporter),
+      animation = animation
     )
 
 /** Models available in Physis Lab. */
@@ -201,7 +217,8 @@ object Catalog:
         (d, r, _, _) => Intervention.Brush("v", Disc(d.x, d.y, r), Op.Erase, 0.0)
       )
     ),
-    wrap = _ => true
+    wrap = _ => true,
+    animation = AnimationDefaults(every = 50, fps = 15)
   )
 
   /** One step is 1/60 time unit, so 1x is 60 steps per second. */
@@ -255,7 +272,8 @@ object Catalog:
     ),
     wrap = p => p.getOrElse("edge", 0.0) == 0.0,
     painted = WavePresets.all.map(p => p.name -> p.interventions).toMap,
-    seeded = false
+    seeded = false,
+    animation = AnimationDefaults(every = 4, fps = 20)
   )
 
   /** One step is one time unit, so the speed is the number of steps per second. */
@@ -294,7 +312,8 @@ object Catalog:
           )
       )
     ),
-    wrap = _ => true
+    wrap = _ => true,
+    animation = AnimationDefaults(every = 5, fps = 15)
   )
 
   /**
@@ -347,7 +366,8 @@ object Catalog:
       )
     ),
     wrap = p => p.getOrElse("edge", 0.0) == 0.0,
-    painted = FluidPresets.all.map(p => p.name -> p.interventions).toMap
+    painted = FluidPresets.all.map(p => p.name -> p.interventions).toMap,
+    animation = AnimationDefaults(every = 4, fps = 20)
   )
 
   /** In menu order; the first one opens at start. */

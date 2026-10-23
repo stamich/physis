@@ -76,7 +76,9 @@ path. `--fps n` is the number of pictures a second (1 to 65535, default 12), `--
 many times it plays (0, the default, for ever); `--every`, `--scale`, `--no-color-bar` and
 `--compress` are as for frames. The first picture is also the ordinary image of the file, so a
 viewer without animation shows it. The bytes depend only on the run (without `--compress`).
-`replay <manifest> --animate <file>` animates a replay. See [export.md](export.md).
+`replay <manifest> --animate <file>` animates a replay. The Lab's File → Save animation… writes
+the same bytes as this command for the manifest it saves next to the file. See
+[export.md](export.md).
 
 ## Strokes
 

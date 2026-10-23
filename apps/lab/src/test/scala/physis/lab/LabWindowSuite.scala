@@ -17,6 +17,16 @@ class CatalogSuite extends munit.FunSuite:
       assertEquals(session.schema.names.toSet, session.initial.keySet)
   }
 
+  test("the models with a heatmap can make pictures without a window, the others cannot") {
+    // Boids draws the flock as a scene, so it has a state exporter but no image
+    val noImage = Set("lorenz", "double-pendulum", "boids")
+    val ode = Set("lorenz", "double-pendulum")
+    for m <- Catalog.models do
+      val session = m.open(seed = 1L, startPaused = true)
+      assertEquals(session.hasImage, !noImage.contains(m.id), m.id)
+      assertEquals(session.exporter.isDefined, !ode.contains(m.id), m.id)
+  }
+
   test("Physarum offers food and trail tools whose strokes the model accepts") {
     import physis.core.run.{Intervention, Physis}
     import physis.models.physarum.Physarum

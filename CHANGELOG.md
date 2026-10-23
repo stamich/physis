@@ -2,6 +2,41 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.6.1 — Save animation
+
+The Lab can save a session as an animated PNG. No model changed: every digest and manifest of
+0.6.0 is the same, and the fluid model stays at version 0.6.0.
+
+### Added
+
+- **Lab**: **File → Save animation…** with a dialog (every *n* steps, pictures a second, scale
+  1× to 16×, loops, colour scale, manifest), a first guess per model and an estimate of frames,
+  picture size, file size and time. It runs in the background with a progress bar and **Cancel**;
+  closing the window cancels it, and the session keeps running meanwhile.
+  [docs/lab.md](docs/lab.md).
+- **Lab**: `LabAnimations`, which replays the session from its manifest and checks the replay
+  against the manifest's digest. The file is byte for byte the one `physis-cli replay --animate`
+  writes with the same settings, and the manifest is written beside it.
+- **view**: `Apng.Writer`, which writes an animated PNG a frame at a time (`Apng.encode` uses it
+  and gives the same bytes); `Frames.animation` streams, reports progress, can be cancelled and
+  removes the file it began; `Frames.frameCount`; `FrameImage.colorBarExtra`.
+
+### Differences from the plan
+
+- The animation is a replay of the manifest, not a recording of the screen, so it is deterministic
+  and can be reproduced on the command line.
+- The version is the tag, as before: there is no version in `gradle.properties` to change.
+- A path whose folder does not exist is created, as for the command line; a path that cannot be
+  written gives a message in the status line.
+
+### Not measured
+
+- How the dialog, progress bar and Cancel look and feel on a real display (CI has no GPU).
+- The export time on a real machine; a fluid replay is slow (about 4 steps a second at 256 × 256),
+  which is why the dialog shows an estimate.
+- Whether the allocation test of the fluid model on macOS, which was flaky in 0.6.0 and has a
+  looser bound, fails again.
+
 ## 0.6.0 — fluids
 
 Incompressible flow on a staggered grid, with the pressure projection, dye and tracer particles,

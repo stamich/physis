@@ -23,7 +23,9 @@ replays with a digest check. Milestone 0.6.0 adds **fluids**: incompressible flo
 grid with a pressure projection, checked against the lid-driven cavity of Ghia et al. and the
 vortex street behind a cylinder, with dye and tracer particles, painted walls and pushes, a Lab
 entry, sweeps over the viscosity (a Reynolds scan), and **animated PNG** export
-(`physis-cli animate`).
+(`physis-cli animate`). Milestone 0.6.1 adds **File → Save animation** to the Lab: the session is
+replayed in the background into an animated PNG, with an estimate, progress and Cancel, and the
+same bytes as `physis-cli replay --animate`.
 
 ## Modules
 
