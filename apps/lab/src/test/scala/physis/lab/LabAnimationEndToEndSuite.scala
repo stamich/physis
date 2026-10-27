@@ -88,6 +88,12 @@ class LabAnimationEndToEndSuite extends LabSuite:
     paintedAndSaved("fluid", Intervention.Brush("dye", Disc(40.0, 40.0, 8.0), Op.Assign, 1.0))
   }
 
+  fxTest(
+    "a session with a raised sea surface is saved as an animation that replays to its digest"
+  ) {
+    paintedAndSaved("shallow", Intervention.Pulse("height", 40.0, 40.0, 4.0, 1.0))
+  }
+
   fxTest("a painted convection session is saved as an animation that replays to its digest") {
     paintedAndSaved("convection", Intervention.Brush("heat", Disc(40.0, 10.0, 5.0), Op.Assign, 0.5))
   }

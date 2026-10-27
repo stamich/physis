@@ -70,6 +70,19 @@ At 48 × 24 with Prandtl number 1 the settled values are about 1.0, 1.6 and 2.1 
 shows the start-up: the rolls need a diffusion time (`H²/κ`, 720 time units here) to grow, longer
 the nearer the critical value. See [models/convection.md](models/convection.md).
 
+## Example: beta and gravity
+
+The shallow-water model has the beta effect and gravity as parameters, so a sweep gives the
+drift of a Rossby wave without and with `β`, or the speed of the waves for two values of `g`:
+
+```bash
+physis-cli sweep --model shallow --param start=2 --param amp=0.1 --param depth=500 --param dx=50000 --param edges=0 --sweep beta=0,4e-11 --until 20000 --sample-every 1000
+physis-cli sweep --model shallow --param start=1 --sweep gravity=5,10 --until 3000 --sample-every 1000
+```
+
+A point whose parameters break the stability rule (a Courant number over 0.7) fails with the
+reason, and the other points still run. See [models/shallow.md](models/shallow.md).
+
 ## Example
 
 ```bash

@@ -15,6 +15,7 @@ dependencies {
     implementation(project(":models:wave"))
     implementation(project(":models:fluid"))
     implementation(project(":models:convection"))
+    implementation(project(":models:shallow"))
 }
 
 dependencies {

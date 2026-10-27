@@ -38,6 +38,17 @@ along the velocity (midpoint rule, two reads of the velocity) and read the old v
 about `U·h/2·(1 − c)` for a Courant number `c = U·dt/h`. The velocity is clamped to 4 cells per
 step. Reads past the border wrap on a periodic axis and clamp otherwise.
 
+## Staggered operators for a layer of water
+
+`Staggered` (in `fields`) has what the shallow-water model needs on the C grid: `openFaces`
+(a face is open if both cells beside it are sea; the border of a closed domain is shut),
+`meanToU` and `meanToV` (the mean of the two cells beside a face, which gives the depth or
+the height there), and `vToU` and `uToV` (the mean of the four faces of the other velocity round
+a face, for the Coriolis term). On a wrapping axis the last `u` face is a copy of the first.
+None of them allocates. The model that uses them is described in
+[shallow.md](models/shallow.md): a forward–backward step whose mass equation is in flux form,
+so the volume is conserved to rounding.
+
 ## Diffusion
 
 Viscosity and dye diffusion are explicit: `f += D·dt·∇²f` with the 5-point Laplacian and ghost
@@ -64,7 +75,9 @@ flags of `Projection` and `Advect.Flow`, which the fluid sets to the same value 
 table of Ghia, Ghia and Shin for the cavity, the Taylor–Green decay and the wake. The slow tests
 compare the Scala model with it and with the table. `tools/convection_reference.py` does the
 same for the convection model: the critical Rayleigh numbers of the linear problem, growth
-rates, roll wavelength and Nusselt numbers.
+rates, roll wavelength and Nusselt numbers. `tools/shallow_reference.py` does it for the linear
+shallow-water scheme: the seiche period and its order of convergence, the wave speed, the Rossby
+radius, the Kelvin wave, the Rossby drift, shoaling and the sponge.
 
 ## Determinism
 

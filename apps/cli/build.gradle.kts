@@ -14,6 +14,7 @@ dependencies {
     implementation(project(":models:physarum"))
     implementation(project(":models:fluid"))
     implementation(project(":models:convection"))
+    implementation(project(":models:shallow"))
 }
 
 application {

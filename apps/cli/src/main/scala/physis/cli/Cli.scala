@@ -70,7 +70,7 @@ object Cli:
 
   private val Common: String =
     """  --model <id>           lorenz | double-pendulum | gray-scott | boids | wave | physarum | fluid |
-      |                         convection (default: lorenz)
+      |                         convection | shallow (default: lorenz)
       |  --preset <name>        start from a preset of the model; --param is applied after it
       |  --param <name=value>   override a model parameter (repeatable)
       |  --seed <n>             run seed (default: 0)
@@ -106,7 +106,7 @@ object Cli:
       s"Usage: physis-cli run [options]\n\nPrints the probes of a run as CSV.\n$Common\n$Strokes"
     case "frames" =>
       s"Usage: physis-cli frames <dir> [options]\n\nNumbered PNGs of the first image of the view " +
-        s"(gray-scott, wave, physarum, fluid, convection); one path per line.\n$Common\n$Strokes\n" +
+        s"(gray-scott, wave, physarum, fluid, convection, shallow); one path per line.\n$Common\n$Strokes\n" +
         "  --every <n>            steps between frames (default: a tenth of the run)\n" +
         s"  --no-color-bar         leave out the colour scale at the right\n$Pictures"
     case "animate" =>

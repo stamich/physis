@@ -56,6 +56,11 @@ class LabAnimationsSuite extends munit.FunSuite:
       "rayleigh" -> 5000.0
     ),
     (
+      Catalog.shallow,
+      Intervention.Brush("land", Disc(60.0, 40.0, 6.0), Op.Assign, 1.0),
+      "friction" -> 0.00001
+    ),
+    (
       Catalog.grayScott,
       Intervention.Brush("v", Disc(60.0, 60.0, 6.0), Op.Assign, 0.5),
       "F" -> 0.03
