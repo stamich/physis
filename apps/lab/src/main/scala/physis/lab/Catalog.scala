@@ -1,26 +1,49 @@
 package physis.lab
 
 import physis.core.{Model, Probe, Stepping}
-import physis.core.live.{Command, LiveRun, StateExport}
+import java.nio.file.Path
+
+import physis.core.live.{Command, ExportSpec, LiveRun, StateExport}
 import physis.core.param.{ParamSchema, Preset}
-import physis.core.run.{Disc, Intervention, ModelRegistry, Op, Physis}
+import physis.core.run.{Disc, Intervention, ModelRegistry, Op, Physis, Run}
 import physis.fx.{RunControls, ToolSpec}
+import physis.netcdf.NcExport
 import physis.models.boids.{Boids, BoidsParams, BoidsState, BoidsViews}
 import physis.models.convection.{
   Convection,
+  ConvectionExport,
   ConvectionParams,
   ConvectionPresets,
   ConvectionSides,
   ConvectionState,
   ConvectionViews
 }
-import physis.models.fluid.{Fluid, FluidParams, FluidPresets, FluidState, FluidViews}
-import physis.models.grayscott.{GrayScott, GrayScottParams, GrayScottState, GrayScottViews}
+import physis.models.fluid.{Fluid, FluidExport, FluidParams, FluidPresets, FluidState, FluidViews}
+import physis.models.grayscott.{
+  GrayScott,
+  GrayScottExport,
+  GrayScottParams,
+  GrayScottState,
+  GrayScottViews
+}
 import physis.models.lorenz.{Lorenz, LorenzParams, LorenzViews}
 import physis.models.pendulum.{Pendulum, PendulumParams, PendulumViews}
-import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
-import physis.models.shallow.{Shallow, ShallowParams, ShallowPresets, ShallowState, ShallowViews}
-import physis.models.wave.{Wave, WaveParams, WavePresets, WaveState, WaveViews}
+import physis.models.physarum.{
+  Physarum,
+  PhysarumExport,
+  PhysarumParams,
+  PhysarumState,
+  PhysarumViews
+}
+import physis.models.shallow.{
+  Shallow,
+  ShallowExport,
+  ShallowParams,
+  ShallowPresets,
+  ShallowState,
+  ShallowViews
+}
+import physis.models.wave.{Wave, WaveExport, WaveParams, WavePresets, WaveState, WaveViews}
 import physis.ode.OdeState
 import physis.view.{Dab, Frames, View}
 
@@ -81,6 +104,71 @@ trait LabModel:
   /** Starts nothing yet: builds a paused-or-running live session with the given seed. */
   def open(seed: Long, startPaused: Boolean = false): LabSession
 
+  /** What File → Export data… writes of a run of this model (see [[LabDatasets]]). */
+  def dataset: LabDataset
+
+/**
+ * How a model's run becomes a NetCDF dataset: the same fields, units and probes as
+ * `physis-cli export`, so the Lab and the command line write the same file.
+ *
+ * `bytes` is the size of the file a run of `steps` steps will be, and `write` writes it; both
+ * take the replayed run, which must be of this model.
+ */
+final class LabDataset(
+    val hasFields: Boolean,
+    val bytes: (Run[?, ?], Long, NcExport.Options) => Either[String, Long],
+    val write: (
+        Run[?, ?],
+        Long,
+        Path,
+        NcExport.Options,
+        (Int, Int) => Unit,
+        () => Boolean
+    ) => Either[String, Int]
+)
+
+object LabDataset:
+  /** The dataset of a model with parameters `P` and state `S`. */
+  def of[P, S](
+      exporter: StateExport[S],
+      spec: P => ExportSpec,
+      probes: P => Vector[Probe[S]],
+      hasFields: Boolean
+  ): LabDataset =
+    def typed(run: Run[?, ?]): Run[P, S] = run.asInstanceOf[Run[P, S]]
+    new LabDataset(
+      hasFields,
+      (run, steps, options) =>
+        val r = typed(run)
+        NcExport
+          .plan(
+            r.state,
+            r.stepCount,
+            steps,
+            r.model.id,
+            r.model.version,
+            exporter,
+            spec(r.initialParams),
+            probes(r.initialParams),
+            options
+          )
+          .map(_.bytes)
+      ,
+      (run, steps, path, options, progress, cancelled) =>
+        val r = typed(run)
+        NcExport.write(
+          r,
+          steps,
+          exporter,
+          spec(r.initialParams),
+          probes(r.initialParams),
+          path,
+          options,
+          progress,
+          cancelled
+        )
+    )
+
 /** What the Lab needs from one running model. */
 final class LabSession(
     val model: LabModel,
@@ -118,6 +206,14 @@ final class OdeEntry[P](
 
   override def speedRange: SpeedRange = SpeedRange.Default.copy(default = speed)
 
+  def dataset: LabDataset =
+    LabDataset.of[P, OdeState](
+      summon[StateExport[OdeState]],
+      _ => ExportSpec.probesOnly(title),
+      probes,
+      hasFields = false
+    )
+
   def open(seed: Long, startPaused: Boolean): LabSession =
     val builder =
       Physis.model(model).withParams(params).stepping(stepping).seed(seed).probe(probes(params)*)
@@ -145,11 +241,20 @@ final class ModelEntry[P, S](
     wrap: Map[String, Double] => Boolean = _ => false,
     painted: Map[String, (Int, Int) => Vector[Intervention]] = Map.empty,
     seeded: Boolean = true,
-    animation: AnimationDefaults = AnimationDefaults()
+    animation: AnimationDefaults = AnimationDefaults(),
+    exportSpec: Option[P => ExportSpec] = None
 ) extends LabModel:
   def id: String = model.id
 
   override def animationDefaults: AnimationDefaults = animation
+
+  def dataset: LabDataset =
+    LabDataset.of[P, S](
+      exporter,
+      exportSpec.getOrElse((_: P) => ExportSpec.probesOnly(title)),
+      _ => probes,
+      hasFields = exportSpec.isDefined
+    )
 
   override def usesSeed: Boolean = seeded
 
@@ -227,7 +332,8 @@ object Catalog:
       )
     ),
     wrap = _ => true,
-    animation = AnimationDefaults(every = 50, fps = 15)
+    animation = AnimationDefaults(every = 50, fps = 15),
+    exportSpec = Some(_ => GrayScottExport.spec)
   )
 
   /** One step is 1/60 time unit, so 1x is 60 steps per second. */
@@ -282,7 +388,8 @@ object Catalog:
     wrap = p => p.getOrElse("edge", 0.0) == 0.0,
     painted = WavePresets.all.map(p => p.name -> p.interventions).toMap,
     seeded = false,
-    animation = AnimationDefaults(every = 4, fps = 20)
+    animation = AnimationDefaults(every = 4, fps = 20),
+    exportSpec = Some(_ => WaveExport.spec)
   )
 
   /** One step is one time unit, so the speed is the number of steps per second. */
@@ -322,7 +429,8 @@ object Catalog:
       )
     ),
     wrap = _ => true,
-    animation = AnimationDefaults(every = 5, fps = 15)
+    animation = AnimationDefaults(every = 5, fps = 15),
+    exportSpec = Some(_ => PhysarumExport.spec)
   )
 
   /**
@@ -376,7 +484,8 @@ object Catalog:
     ),
     wrap = p => p.getOrElse("edge", 0.0) == 0.0,
     painted = FluidPresets.all.map(p => p.name -> p.interventions).toMap,
-    animation = AnimationDefaults(every = 4, fps = 20)
+    animation = AnimationDefaults(every = 4, fps = 20),
+    exportSpec = Some(_ => FluidExport.spec)
   )
 
   /**
@@ -432,7 +541,8 @@ object Catalog:
     ),
     wrap = p => p.getOrElse("sides", 0.0) == ConvectionSides.Periodic.toDouble,
     painted = ConvectionPresets.all.map(p => p.name -> p.interventions).toMap,
-    animation = AnimationDefaults(every = 100, fps = 20)
+    animation = AnimationDefaults(every = 100, fps = 20),
+    exportSpec = Some(ConvectionExport.spec)
   )
 
   /**
@@ -489,7 +599,8 @@ object Catalog:
     ),
     wrap = p => p.getOrElse("edges", 0.0) == Shallow.Channel.toDouble,
     painted = ShallowPresets.all.map(p => p.name -> p.interventions).toMap,
-    animation = AnimationDefaults(every = 10, fps = 20)
+    animation = AnimationDefaults(every = 10, fps = 20),
+    exportSpec = Some(ShallowExport.spec)
   )
 
   /** In menu order; the first one opens at start. */

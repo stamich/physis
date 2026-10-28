@@ -32,6 +32,11 @@ the Lab paints heat and cold into it and `physis-cli sweep` scans the Rayleigh n
 **shallow water** on a rotating plane: gravity waves, geostrophic adjustment, Kelvin and Rossby waves
 and a tsunami that slows down on a shelf, checked against the wave speed, the Rossby radius and the
 Rossby dispersion relation and a numpy reference; the Lab paints uplifts, dips and land into it.
+Milestone 0.9.0 adds **NetCDF export**: any run as a classic NetCDF file (CF metadata, fields, probes,
+time, a digest per record and the manifest inside), from `physis-cli export`, **File → Export data…**
+in the Lab and `physis-cli sweep --export`, with a writer and reader of the format written for
+Physis and checked against `libnetcdf`, and `physis-cli verify`, which replays a file and compares it
+bit for bit.
 
 ## Modules
 
@@ -42,6 +47,7 @@ Rossby dispersion relation and a numpy reference; the Lab paints uplifts, dips a
 | `modules/verify` | convergence order, conservation, determinism and allocation checks |
 | `models/lorenz` | Lorenz system, golden values from a 40-digit reference integration |
 | `models/pendulum` | double pendulum with energy probes |
+| `modules/netcdf` | a writer and reader of classic NetCDF (CDF-2), CF metadata, `NcExport` for runs, `NcCompare` |
 | `modules/fields` | `Grid2D`, `Field2D`, boundaries, 5- and 9-point Laplacians, `ParticleSet`, `NeighborGrid` |
 | `models/grayscott` | Gray–Scott reaction–diffusion with Pearson's regimes as presets |
 | `models/boids` | Boids and the Vicsek model on a periodic world |
@@ -143,7 +149,8 @@ Every model ships with tests that check the numerics, not only the code:
 
 See [docs/models](docs/models) for the equations, integrators and checks of each model,
 [docs/fields.md](docs/fields.md) for grids and agents, and
-[docs/interventions.md](docs/interventions.md) for painting into a running model.
+[docs/interventions.md](docs/interventions.md) for painting into a running model, and
+[docs/datasets.md](docs/datasets.md) for NetCDF export.
 
 ## Design rules
 

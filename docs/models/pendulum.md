@@ -41,6 +41,10 @@ A symplectic option (implicit midpoint) may be added later.
 Probes: `energy`, `energyDrift` (relative to the initial energy), `x2`, `y2` (outer bob position,
 pivot at the origin, y up).
 
+## Datasets
+
+`physis-cli export` writes the probes of the run, with the time and a digest per record, as a NetCDF file; the model has no fields. See [datasets.md](../datasets.md).
+
 ## Verification
 
 | Check | Threshold | Where |

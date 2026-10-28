@@ -6,6 +6,7 @@ plugins {
 description = "Physis command line: run models, sweep parameters, export frames and replay manifests."
 
 dependencies {
+    implementation(project(":netcdf"))
     implementation(project(":models:lorenz"))
     implementation(project(":models:pendulum"))
     implementation(project(":models:grayscott"))

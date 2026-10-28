@@ -90,6 +90,10 @@ Painting a wall closes the faces of the cells and clears the dye inside them; th
 projection makes the flow go around. A push is not free of divergence: the next projection
 removes the part that is not a swirl, so a push makes a vortex, not a source.
 
+## Datasets
+
+`physis-cli export` and File → Export data… write the run as a NetCDF file with the fields `dye`, `vorticity`, `speed` and `wall`, the probes, the time and a digest per record; see [datasets.md](../datasets.md).
+
 ## Checks
 
 - A Taylor–Green vortex decays as `exp(−4νk²t)` within 10 %: the measured decay is 0.784 against

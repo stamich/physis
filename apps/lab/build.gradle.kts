@@ -7,6 +7,7 @@ description = "Physis Lab: desktop application for running models live."
 
 dependencies {
     implementation(project(":fx"))
+    implementation(project(":netcdf"))
     implementation(project(":models:lorenz"))
     implementation(project(":models:pendulum"))
     implementation(project(":models:grayscott"))

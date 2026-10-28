@@ -2,6 +2,61 @@
 
 All notable changes to Physis are listed here. Versions follow `vX.Y.Z` tags on `main`.
 
+## 0.9.0 — NetCDF export
+
+Any run can be written as a NetCDF file: the fields of the model at a series of times, the
+probes, the time, a digest of the state at every record, and the manifest of the run inside the
+file. Models of earlier milestones are unchanged and their digests are the same.
+
+### Added
+
+- **netcdf**: a new module, `modules/netcdf`, that depends only on `core`. `Schema`, `Dim`, `Var`
+  and `Attr` describe a file and are validated; `Cf` gives the CF attributes of axes, time and
+  data (`Conventions = CF-1.8`); `NcWriter` writes classic NetCDF with 64-bit offsets (CDF-2),
+  one record at a time, with the size known before the first byte; `NcFile` reads CDF-1 and
+  CDF-2 files; `NcExport` writes a run; `NcCompare` compares two files bit for bit;
+  [docs/datasets.md](docs/datasets.md).
+- **core, models**: `ExportSpec` and `FieldMeta` say which slices of a model's state are fields,
+  with names, units, the size of a cell and CF standard names; an export object for gray-scott,
+  wave, physarum, fluid, convection and shallow.
+- **CLI**: `export <file>` (`--every`, `--vars`, `--float`), `replay --export`, `sweep --export
+  <dir>` (one file per point), and `verify <file>`, which replays the manifest inside a file and
+  compares every value bit for bit.
+- **Lab**: File → Export data…, with the interval, the precision and the manifest, an estimate
+  of records, size and time, progress and Cancel.
+- **tools**: `tools/netcdf_reference.py`, a second writer and parser of the format in Python.
+
+### Verified
+
+- The Scala writer's bytes equal those of the Python writer for a small and a full file (golden
+  tests), and `libnetcdf` (`netCDF4` 1.7.5.1) and `scipy` read the Python files with the same
+  dimensions, attributes and values. This check was run by hand, not in CI.
+- A shallow sea written at every step reads back with the same values as a twin run; the last
+  record's digest, from `digest_hi` and `digest_lo`, is the twin's `digest`.
+- The same bytes come out on every run; the size announced before the run is the size of the
+  file, to the byte; a cancelled export leaves no file.
+- A file written by the Lab equals the one `replay --export` writes for the same manifest, and
+  `verify` accepts it; an edited file is refused with the variable and record named.
+- Speed on a CI runner (slow tests; the bars are far lower): 201 records of the default sea
+  (128 × 96, five fields, 94 MB) are written at 391 MB/s and read back at 893 MB/s.
+
+### Differences from the plan
+
+- Own writer and reader of the classic format, in place of NetCDF-4/HDF5: no compression, groups
+  or chunking, and no native library.
+- The digest of a record is two int32 variables, since the header is written first and cannot
+  hold a final digest; the manifest in the header has no digest for the same reason.
+- Fields are 64-bit floats by default, with `--float` for 32-bit.
+- The flag of `replay` is `--export`, and the reader is public in a minimal form (`NcFile`).
+- Spherical shallow water and wetting/drying are left for 0.10.0.
+
+### Not measured
+
+- The Lab dialog and the background save on a real display; the tests cover the window API and
+  the headless path.
+- Opening a file in ParaView, Panoply, xarray or MATLAB; only `libnetcdf` and `scipy` were tried.
+- Files of many gigabytes: the Lab refuses over 1 GB and the reader over 2 GB.
+
 ## 0.8.0 — shallow water
 
 Shallow water on a rotating plane: gravity waves, geostrophic adjustment, Kelvin and Rossby waves

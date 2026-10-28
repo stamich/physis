@@ -96,6 +96,10 @@ Heat is a deviation: a hot spot of 0.5 raises the temperature by half of `ΔT` w
 painted. Cells in a wall keep `θ = 0` and the flow goes around them. In the Lab the tools are
 **Heat spot**, **Cool spot** (the right button resets the place), **Wall** and **Erase wall**.
 
+## Datasets
+
+`physis-cli export` and File → Export data… write the run as a NetCDF file with the fields `temperature`, `deviation`, `vorticity`, `speed` and `wall`, the probes, the time and a digest per record; see [datasets.md](../datasets.md).
+
 ## Checks
 
 Against theory and against `tools/convection_reference.py`, an independent numpy implementation of

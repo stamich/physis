@@ -34,6 +34,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
+import physis.netcdf.{Attr, NcCompare, NcExport, NcFile}
 import physis.view.{Frame, Frames, Montage, Png, View}
 
 /**
@@ -91,6 +92,13 @@ object Headless:
       |  --no-color-bar         leave out the colour scale at the right
       |  --compress             deflate the PNG data (smaller files, same pixels)
       |
+      |Datasets (all models): a NetCDF file of the run, read by xarray, Panoply and ParaView
+      |  --export <file.nc>     write time, step, a digest of the state, the fields and the
+      |                         probes every --every steps instead of printing a CSV; the
+      |                         manifest is inside the file
+      |  --vars <a,b,...>       only these fields and probes
+      |  --float                fields as 32-bit floats (half the size)
+      |
       |Sweeps: the product of the axes, one run per point, results in grid order
       |  --sweep <axis>         name=a:b:n | name=log:a:b:n | name=a,b,c | seed=a..b (repeatable)
       |  --threads <n>          runs at the same time (default: one per processor)
@@ -128,6 +136,9 @@ object Headless:
       interventions: Vector[InterventionEvent] = Vector.empty,
       frames: Option[Path] = None,
       animate: Option[Path] = None,
+      dataset: Option[Path] = None,
+      vars: Option[Set[String]] = None,
+      single: Boolean = false,
       fps: Int = 12,
       loops: Int = 0,
       strokes: Vector[InterventionEvent] = Vector.empty,
@@ -278,6 +289,13 @@ object Headless:
         whole(v, "--threads", 1L).flatMap(n => parse(rest, options.copy(threads = Some(n.toInt))))
       case "--frames" :: path :: rest => parse(rest, options.copy(frames = Some(Path.of(path))))
       case "--animate" :: path :: rest => parse(rest, options.copy(animate = Some(Path.of(path))))
+      case "--export" :: path :: rest => parse(rest, options.copy(dataset = Some(Path.of(path))))
+      case "--vars" :: names :: rest =>
+        parse(
+          rest,
+          options.copy(vars = Some(names.split(",").map(_.trim).filter(_.nonEmpty).toSet))
+        )
+      case "--float" :: rest => parse(rest, options.copy(single = true))
       case "--fps" :: v :: rest =>
         whole(v, "--fps", 1L)
           .filterOrElse(_ <= 65535L, s"--fps must be at most 65535, got $v")
@@ -302,6 +320,61 @@ object Headless:
       case option :: Nil if option.startsWith("--") => Left(s"$option expects a value")
       case other :: _ => Left(s"unknown argument '$other'")
 
+  /**
+   * Checks a dataset written by `export` against the run that should have made it: the manifest
+   * inside the file is replayed, with the same `--every`, precision and variables, and every
+   * value of the replay must equal the file's, bit for bit. Returns the exit code: 0 if the
+   * data agrees, 1 if it does not or the file cannot be checked.
+   */
+  def verify(path: Path, out: PrintStream, err: PrintStream): Int =
+    val temp = Files.createTempFile("physis-verify", ".nc")
+    try
+      val outcome: Either[String, String] =
+        for
+          file <- NcFile.read(path)
+          json <- file
+            .text("physis_manifest")
+            .toRight("the file has no manifest (physis_manifest): not written by physis-cli export")
+          m <- Manifest.fromJson(json)
+          every <- file
+            .text("physis_every")
+            .flatMap(_.toLongOption)
+            .toRight("the file does not say how often it was written (physis_every)")
+          base = Options(
+            dataset = Some(temp),
+            every = Some(every),
+            single = file.text("physis_precision").contains("float32"),
+            vars = file.text("physis_vars").map(_.split(",").toSet)
+          )
+          o <- fromParsed(m, base)
+          replayErr = new java.io.ByteArrayOutputStream()
+          code = run(
+            o,
+            new PrintStream(new java.io.ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+            new PrintStream(replayErr, true, StandardCharsets.UTF_8)
+          )
+          _ <- Either.cond(
+            code == 0,
+            (),
+            s"the replay failed: ${replayErr.toString(StandardCharsets.UTF_8).trim}"
+          )
+          again <- NcFile.read(temp)
+          _ <- NcCompare.diff(file, again).fold[Either[String, Unit]](Right(()))(why =>
+            Left(s"DIFFERS: $why")
+          )
+        yield s"verified: ${file.records} records, ${file.schema.vars.size} variables, " +
+          s"identical to a replay of the manifest (${file.text("physis_model").getOrElse("?")}, " +
+          s"written by ${file.text("source").getOrElse("?")})"
+      outcome match
+        case Right(message) =>
+          out.println(message)
+          0
+        case Left(why) =>
+          err.println(if why.startsWith("DIFFERS") then s"# $why" else s"error: $why")
+          1
+    finally
+      val _ = Files.deleteIfExists(temp)
+
   /** Runs with `options`, writing CSV to `out` and a summary to `err`; returns the exit code. */
   def run(options: Options, out: PrintStream, err: PrintStream): Int =
     val resolved = options.replay match
@@ -322,39 +395,44 @@ object Headless:
     val text =
       try Right(Files.readString(path, StandardCharsets.UTF_8))
       catch case e: java.io.IOException => Left(s"cannot read $path: ${e.getMessage}")
-    text.flatMap(Manifest.fromJson).flatMap { m =>
-      catalog.get(m.model) match
-        case None => Left(s"unknown model '${m.model}'")
-        case Some(entry) if entry.model.version != m.modelVersion =>
-          Left(
-            s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}"
+    text.flatMap(Manifest.fromJson).flatMap(m => fromParsed(m, options))
+
+  /** The options that replay `m`, with the output options of `options`. */
+  private def fromParsed(m: Manifest, options: Options): Either[String, Options] =
+    catalog.get(m.model) match
+      case None => Left(s"unknown model '${m.model}'")
+      case Some(entry) if entry.model.version != m.modelVersion =>
+        Left(
+          s"model '${m.model}' is version ${entry.model.version}, manifest needs ${m.modelVersion}"
+        )
+      case Some(_) =>
+        Right(
+          Options(
+            model = m.model,
+            params = m.params,
+            until = m.until,
+            sampleEvery = m.sampleEvery,
+            seed = m.seed,
+            exactStepping = Some(m.stepping),
+            steps = m.steps,
+            events = m.events,
+            interventions = m.interventions,
+            frames = options.frames,
+            animate = options.animate,
+            dataset = options.dataset,
+            vars = options.vars,
+            single = options.single,
+            fps = options.fps,
+            loops = options.loops,
+            manifest = options.manifest,
+            strokes = options.strokes,
+            expectedDigest = if options.strokes.isEmpty then m.digest else None,
+            every = options.every,
+            scale = options.scale,
+            colorBar = options.colorBar,
+            compress = options.compress
           )
-        case Some(_) =>
-          Right(
-            Options(
-              model = m.model,
-              params = m.params,
-              until = m.until,
-              sampleEvery = m.sampleEvery,
-              seed = m.seed,
-              exactStepping = Some(m.stepping),
-              steps = m.steps,
-              events = m.events,
-              interventions = m.interventions,
-              frames = options.frames,
-              animate = options.animate,
-              fps = options.fps,
-              loops = options.loops,
-              manifest = options.manifest,
-              strokes = options.strokes,
-              expectedDigest = if options.strokes.isEmpty then m.digest else None,
-              every = options.every,
-              scale = options.scale,
-              colorBar = options.colorBar,
-              compress = options.compress
-            )
-          )
-    }
+        )
 
   private def execute(o: Options, out: PrintStream, err: PrintStream): Either[String, Int] =
     if o.list then
@@ -442,10 +520,11 @@ object Headless:
       try
         if o.sweep.nonEmpty then sweep(entry, o, out, err)
         else
-          (o.animate, o.frames) match
-            case (Some(file), _) => animation(entry, o, p, file, out, err)
-            case (None, Some(dir)) => frames(entry, o, p, dir, out, err)
-            case (None, None) => runAndPrint(entry, o, p, out, err)
+          (o.dataset, o.animate, o.frames) match
+            case (Some(file), _, _) => dataset(entry, o, p, file, out, err)
+            case (None, Some(file), _) => animation(entry, o, p, file, out, err)
+            case (None, None, Some(dir)) => frames(entry, o, p, dir, out, err)
+            case (None, None, None) => runAndPrint(entry, o, p, out, err)
       catch case e: IllegalArgumentException => Left(e.getMessage)
     }
 
@@ -573,6 +652,54 @@ object Headless:
           writeManifest(o, run, steps, dt)
           digestCheck(o, run.digest, err)
         }
+      }
+    }
+
+  /**
+   * The run as a NetCDF dataset: fields, probes, time and a digest of the state at every
+   * `--every` steps, with the manifest of the run in the file. Its path is printed.
+   */
+  private def dataset(
+      entry: Entry[Any, Any],
+      o: Options,
+      p: Any,
+      file: Path,
+      out: PrintStream,
+      err: PrintStream
+  ): Either[String, Int] =
+    Datasets.of(o.model).toRight(s"model '${o.model}' cannot be exported").flatMap { data =>
+      val fixed: Either[String, Double] = o.steppingFor(entry.stepping) match
+        case Stepping.Fixed(dt) => Right(dt)
+        case _ => Left("datasets need fixed steps")
+      fixed.flatMap { dt =>
+        val run = build(entry, o, p, probes = false)
+        val steps = o.steps.getOrElse(math.round(o.until / dt))
+        val every = o.every.getOrElse(math.max(1L, steps / 10))
+        // nothing has run yet, so the run has recorded no event or stroke: the manifest is
+        // told the ones that are scheduled, as the replay of the file will need them
+        val manifest = run
+          .manifest(steps * dt)
+          .copy(
+            steps = Some(steps),
+            events = o.events,
+            interventions = (o.interventions ++ o.strokes).sortBy(_.step)
+          )
+        val options = NcExport.Options(
+          every,
+          o.single,
+          o.vars,
+          Vector(Attr.text("physis_manifest", Manifest.toJson(manifest)))
+        )
+        NcExport.write(run, steps, data.exporter, data.spec(p), entry.probes(p), file, options)
+          .map { n =>
+            out.println(file.toString)
+            err.println(
+              s"# dataset of ${o.model} in $file: $n records, $steps steps, every $every" +
+                (if o.single then ", single precision" else "")
+            )
+            writeManifest(o, run, steps, dt)
+            digestCheck(o, run.digest, err)
+          }
       }
     }
 
@@ -716,7 +843,7 @@ object Headless:
     val results = Sweep.run(setup, grid, threads) { (run, result) =>
       if o.progress then err.println(s"# ${done.incrementAndGet()}/${grid.size}")
       val manifest =
-        if o.manifests.isDefined then
+        if o.manifests.isDefined || o.dataset.isDefined then
           Manifest.toJson(run.manifest(o.until).copy(digest = Some(result.finalDigest)))
         else ""
       val picture = entry.image
@@ -738,7 +865,10 @@ object Headless:
       val written = o.manifests match
         case Some(dir) => SweepOutput.writeManifests(dir, manifests).map(_.size)
         case None => Right(0)
-      written.flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
+      val datasets = o.dataset match
+        case Some(dir) => writeDatasets(o, manifests, dir, err)
+        case None => Right(Vector.empty[Path])
+      written.flatMap(_ => datasets).flatMap(_ => writeMontage(grid, results, o, err)).map { _ =>
         val failed = results.filter(_.outcome.isLeft)
         failed.foreach(r =>
           err.println(s"# point ${r.point.index}: ${r.outcome.left.getOrElse("")}")
@@ -749,6 +879,48 @@ object Headless:
         if failed.isEmpty then 0 else 1
       }
     catch case e: java.io.IOException => Left(s"cannot write sweep output: ${e.getMessage}")
+
+  /**
+   * Writes `point-<index>.nc` into `dir` for every point that finished: the dataset of the
+   * manifest of the point, replayed with the same `--every`, `--vars` and `--float`, so each
+   * file is what `replay point-<index>.json --export` writes and `verify` accepts. The replay
+   * checks its digest against the one the sweep got.
+   */
+  private def writeDatasets(
+      o: Options,
+      results: Vector[PointResult[String]],
+      dir: Path,
+      err: PrintStream
+  ): Either[String, Vector[Path]] =
+    try
+      Files.createDirectories(dir)
+      val width = math.max(4, (results.size - 1).toString.length)
+      val sink = new PrintStream(new java.io.ByteArrayOutputStream(), true, StandardCharsets.UTF_8)
+      val written = results.flatMap { r =>
+        r.outcome.toOption.map { point =>
+          val name = s"point-${r.point.index.toString.reverse.padTo(width, '0').reverse}.nc"
+          val file = dir.resolve(name)
+          val replayErr = new java.io.ByteArrayOutputStream()
+          val result =
+            for
+              m <- Manifest.fromJson(point.extra)
+              replay <- fromParsed(m, o.copy(dataset = Some(file), manifest = None))
+              code <- execute(
+                replay,
+                sink,
+                new PrintStream(replayErr, true, StandardCharsets.UTF_8)
+              )
+              _ <- Either.cond(code == 0, (), replayErr.toString(StandardCharsets.UTF_8).trim)
+            yield file
+          result.left.map(why => s"point ${r.point.index}: $why")
+        }
+      }
+      written.collectFirst { case Left(why) => why } match
+        case Some(why) => Left(why)
+        case None =>
+          err.println(s"# ${written.size} datasets in $dir")
+          Right(written.collect { case Right(f) => f })
+    catch case e: java.io.IOException => Left(s"could not write datasets to $dir: ${e.getMessage}")
 
   /** Tiles the final pictures of a sweep into the `--montage` file, if one was asked for. */
   private def writeMontage(

@@ -63,6 +63,10 @@ and **Erase v** sets it to zero; both are `Brush` interventions on the `v` slice
 the border. Values are clamped to [0, 1] when painted. A bump of v in the rest state `u = 1`,
 `v = 0` grows into a new pattern. See [interventions](../interventions.md).
 
+## Datasets
+
+`physis-cli export` and File → Export data… write the run as a NetCDF file with the fields `u` and `v`, the probes, the time and a digest per record; see [datasets.md](../datasets.md).
+
 ## Verification
 
 | Check | Threshold | Where |

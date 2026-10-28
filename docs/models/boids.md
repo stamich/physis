@@ -68,6 +68,10 @@ removed or placed. The turn uses the model's own sine and cosine series and no r
 so it is the same on every platform and the flock replays after a disturbance. See
 [interventions](../interventions.md).
 
+## Datasets
+
+`physis-cli export` writes the probes of the run, with the time and a digest per record, as a NetCDF file; the model has no fields. See [datasets.md](../datasets.md).
+
 ## Verification
 
 | Check | Threshold | Where |

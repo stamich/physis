@@ -1,7 +1,7 @@
 # Command line
 
 `physis-cli` runs models without a window: it prints probes as CSV, writes frames and montages as
-PNG, runs sweeps over a grid of parameters and replays manifests. It is the `apps/cli` module;
+PNG, writes runs as NetCDF datasets, runs sweeps over a grid of parameters and replays manifests. It is the `apps/cli` module;
 `RunHeadless` in `examples` is the same engine with the options of 0.5 and no commands.
 
 ## Starting it
@@ -21,6 +21,8 @@ The distribution needs a Java 22 or newer on the path. The examples below leave 
 | `run` | runs a model and prints its probes as CSV |
 | `frames <dir>` | numbered PNGs of the first image of the view (gray-scott, wave, physarum, fluid, convection, shallow) |
 | `animate <file>` | the same frames as one animated PNG (`--fps`, `--loops`) |
+| `export <file>` | the fields and probes of a run as a NetCDF dataset, see [datasets.md](datasets.md) |
+| `verify <file>` | replays the manifest inside a dataset and compares every value |
 | `sweep` | one run per point of a grid, results in grid order, as CSV |
 | `montage <png>` | a sweep that also tiles the final images of all points into one PNG |
 | `replay <manifest>` | re-runs a manifest with its parameter changes and strokes |
@@ -81,6 +83,23 @@ viewer without animation shows it. The bytes depend only on the run (without `--
 the same bytes as this command for the manifest it saves next to the file. See
 [export.md](export.md).
 
+## Datasets
+
+```bash
+physis-cli export sea.nc --model shallow --param nx=48 --param ny=32 --param start=1 --steps 40 --every 10
+physis-cli verify sea.nc
+physis-cli export lorenz.nc --model lorenz --until 2 --every 100 --manifest lorenz.json
+physis-cli replay lorenz.json --export again.nc --every 100
+```
+
+`export` writes the run as a NetCDF file: the fields of the model every `--every` steps (about
+eleven records without it), the probes, the time and a digest of the state, with the manifest of
+the run inside. `--vars a,b` keeps only those fields and probes, `--float` writes the fields
+as 32-bit floats. The path is printed on standard output, and the size of the file is announced
+on standard error before the run. `verify` runs the manifest inside a file again and compares
+every value, exit code 1 if one differs. The file, its variables and its limits are in
+[datasets.md](datasets.md).
+
 ## Strokes
 
 ```bash
@@ -119,6 +138,7 @@ of `--threads`. Further options:
 | `--out <path>` | write the CSV to a file instead of standard output |
 | `--jsonl <path>` | also write one JSON object per point |
 | `--manifests <dir>` | also write a manifest per point; each carries its digest and replays to it |
+| `--export <dir>` | also write a NetCDF dataset per point, `point-0000.nc`, … (`--every`, `--vars`, `--float` as for `export`) |
 | `--dry-run` | print the axes and the number of points, run and write nothing |
 | `--fail-fast` | check every point against the schema and the model's limits first and run nothing if one is refused |
 | `--quiet` | no `# done/total` lines on standard error |

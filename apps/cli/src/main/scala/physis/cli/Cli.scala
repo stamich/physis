@@ -16,6 +16,9 @@ object Plan:
   /** The parameters, presets and probes of one model. */
   final case class Describe(model: String) extends Plan
 
+  /** Check a dataset against a replay of the manifest inside it. */
+  final case class Verify(file: String) extends Plan
+
   /** Run the engine with these (checked) options of [[Headless]]. */
   final case class Engine(args: List[String]) extends Plan
 
@@ -38,17 +41,31 @@ object Cli:
 
   private val strokes = Spec(Set("--stroke", "--manifest"))
   private val movie = Spec(Set("--fps", "--loops"))
+  private val data = Spec(Set("--every", "--vars"), Set("--float"))
 
   private val runSpec = model ++ time ++ strokes
   private val framesSpec = model ++ time ++ image ++ strokes
   private val animateSpec = framesSpec ++ movie
+  private val exportSpec = model ++ time ++ strokes ++ data
   private val sweepSpec = model ++ time ++
     Spec(
-      Set("--sweep", "--threads", "--out", "--jsonl", "--manifests", "--montage", "--scale"),
-      Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast")
+      Set(
+        "--sweep",
+        "--threads",
+        "--out",
+        "--jsonl",
+        "--manifests",
+        "--montage",
+        "--scale",
+        "--export",
+        "--every",
+        "--vars"
+      ),
+      Set("--compress", "--progress", "--quiet", "--dry-run", "--fail-fast", "--float")
     )
   private val montageSpec = sweepSpec ++ Spec(Set("--montage-columns"))
-  private val replaySpec = animateSpec ++ Spec(Set("--frames", "--animate"))
+  private val replaySpec =
+    animateSpec ++ Spec(Set("--frames", "--animate", "--vars", "--export"), Set("--float"))
 
   val Usage: String =
     """Usage: physis-cli <command> [options]
@@ -57,6 +74,8 @@ object Cli:
       |  run                 run a model and print its probes as CSV
       |  frames <dir>        write numbered PNGs of a run into <dir>
       |  animate <file>      write the frames of a run as one animated PNG
+      |  export <file>       write a run as a NetCDF dataset: fields, probes, time
+      |  verify <file>       replay the manifest inside a dataset and compare every value
       |  sweep               run a grid of parameters, one run per point, and print a CSV
       |  montage <png>       like sweep, and tile the final images of all points into <png>
       |  replay <manifest>   re-run a manifest, with its changes and strokes
@@ -116,6 +135,14 @@ object Cli:
         "  --fps <n>              frames per second, 1 to 65535 (default: 12)\n" +
         "  --loops <n>            times it plays, 0 for ever (default: 0)\n" +
         s"  --no-color-bar         leave out the colour scale at the right\n$Pictures"
+    case "export" =>
+      s"Usage: physis-cli export <file.nc> [options]\n\nThe run as a NetCDF dataset (classic format, " +
+        s"readable by xarray, Panoply and ParaView): time, step, a digest of the state, the " +
+        s"fields of the model and its probes, a record every --every steps. The manifest of the " +
+        s"run is inside the file. The file name is printed.\n$Common\n$Strokes\n" +
+        "  --every <n>            steps between records (default: a tenth of the run)\n" +
+        "  --vars <a,b,...>       only these fields and probes (default: all)\n" +
+        "  --float                write the fields as 32-bit floats (half the size)"
     case "sweep" =>
       s"Usage: physis-cli sweep --sweep <axis> [--sweep <axis>...] [options]\n\n" +
         s"One run per point of the product of the axes, results in grid order whatever the " +
@@ -132,8 +159,15 @@ object Cli:
         "  --animate <file>       write an animated PNG instead\n" +
         "  --every <n>, --scale <n>, --no-color-bar, --compress, --fps <n>, --loops <n>  " +
         "as for animate\n" +
+        "  --export <file.nc>     write a NetCDF dataset instead (--every, --vars, --float as " +
+        "for export)\n" +
         "  --stroke <spec>        more strokes (they end the digest check), --manifest <path> " +
         "records the result"
+    case "verify" =>
+      "Usage: physis-cli verify <file.nc>\n\nReads the manifest inside a dataset written by " +
+        "export, runs it again with the same --every, precision and variables, and compares " +
+        "every value with the file, bit for bit (attributes, which hold the version of the " +
+        "program, are not compared). Exit code 0 if they agree, 1 if not."
     case "list" => "Usage: physis-cli list\n\nLists the models with their parameters."
     case "describe" =>
       "Usage: physis-cli describe <model>\n\nParameters with range and unit, presets, probes, " +
@@ -156,6 +190,10 @@ object Cli:
       positional("animate", "a PNG file", rest).flatMap { (file, more) =>
         checked("animate", more, animateSpec).map(a => Plan.Engine("--animate" :: file :: a))
       }
+    case "export" :: rest =>
+      positional("export", "a .nc file", rest).flatMap { (file, more) =>
+        checked("export", more, exportSpec).map(a => Plan.Engine("--export" :: file :: a))
+      }
     case "sweep" :: rest => sweep("sweep", rest, sweepSpec).map(a => Plan.Engine(progress(a)))
     case "montage" :: rest =>
       positional("montage", "a PNG file", rest).flatMap { (png, more) =>
@@ -166,6 +204,8 @@ object Cli:
       positional("replay", "a manifest file", rest).flatMap { (file, more) =>
         checked("replay", more, replaySpec).map(a => Plan.Engine("--replay" :: file :: a))
       }
+    case "verify" :: file :: Nil if !file.startsWith("-") => Right(Plan.Verify(file))
+    case "verify" :: _ => Left("verify takes one file: physis-cli verify <file.nc>")
     case "list" :: Nil => Right(Plan.Engine(List("--list")))
     case "list" :: _ => Left("list takes no arguments")
     case "describe" :: id :: Nil if !id.startsWith("-") => Right(Plan.Describe(id))
@@ -180,7 +220,18 @@ object Cli:
     else "--progress" :: args
 
   val Commands: Vector[String] =
-    Vector("run", "frames", "animate", "sweep", "montage", "replay", "list", "describe")
+    Vector(
+      "run",
+      "frames",
+      "animate",
+      "export",
+      "verify",
+      "sweep",
+      "montage",
+      "replay",
+      "list",
+      "describe"
+    )
 
   private def sweep(command: String, args: List[String], spec: Spec): Either[String, List[String]] =
     checked(command, args, spec).flatMap { a =>
@@ -225,6 +276,7 @@ object Cli:
       case Right(Plan.Version) =>
         out.println(s"physis-cli ${BuildInfo.version}")
         0
+      case Right(Plan.Verify(file)) => Headless.verify(java.nio.file.Path.of(file), out, err)
       case Right(Plan.Describe(id)) =>
         Headless.describe(id, out) match
           case Right(()) => 0

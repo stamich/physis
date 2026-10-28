@@ -35,6 +35,10 @@ class CliSuite extends munit.FunSuite:
     )
     assertEquals(engine("sweep", "--quiet", "--sweep", "k=1,2"), List("--sweep", "k=1,2"))
     assertEquals(engine("replay", "run.json"), List("--replay", "run.json"))
+    assertEquals(
+      engine("export", "run.nc", "--model", "shallow", "--float"),
+      List("--export", "run.nc", "--model", "shallow", "--float")
+    )
     assertEquals(engine("list"), List("--list"))
   }
 
