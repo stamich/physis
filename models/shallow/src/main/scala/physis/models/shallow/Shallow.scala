@@ -4,7 +4,7 @@ import physis.core.{Digest, Model, Probe, StepContext, Stepping}
 import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
-import physis.core.run.{Disc, Intervention, Op}
+import physis.core.run.{Disc, Intervention, Op, Raster, Rasters}
 import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Staggered}
 
 /**
@@ -23,11 +23,18 @@ import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Stagger
  *                above and below; 1 a closed basin; 2 an open sea whose borders absorb waves
  * @param sponge  width in cells of the absorbing strip along the borders of an open sea
  * @param seabed  the shape of the sea floor (needs a restart): 0 flat, 1 a shelf that rises
- *                toward the right, 2 a seamount in the middle
- * @param start   how the run begins (needs a restart): 0 at rest, 1 a front, 2 a Rossby wave
+ *                toward the right, 2 a seamount in the middle, 3 a plane beach that comes out of
+ *                the water, 4 the beach with a bay (3 and 4 need flooding)
+ * @param start   how the run begins (needs a restart): 0 at rest, 1 a front, 2 a Rossby wave,
+ *                3 a solitary wave going right, 4 an N-wave (a dip ahead of a hump) going right
  * @param amp     the size of the start, in m: the height of the front
  * @param nx      grid columns (needs a restart)
  * @param ny      grid rows (needs a restart)
+ * @param flooding 0 for a coast that is a wall, 1 for a coast that floods and dries: water can
+ *                run up over land and leave it again (needs a restart, and `nonlinear = 1`)
+ * @param dryDepth the depth of water, in m, under which a face carries no flow: water thinner
+ *                than this over a sill stays where it is
+ * @param slope   how steep the beach of seabed 3 and 4 is, in m of rise per m (needs a restart)
  */
 final case class ShallowParams(
     gravity: Double,
@@ -43,7 +50,10 @@ final case class ShallowParams(
     start: Int,
     amp: Double,
     nx: Int,
-    ny: Int
+    ny: Int,
+    flooding: Int = 0,
+    dryDepth: Double = 0.01,
+    slope: Double = 0.05
 )
 
 object ShallowParams:
@@ -67,7 +77,7 @@ object ShallowParams:
     ParamSpec(
       "dx",
       default = 20_000.0,
-      min = 500.0,
+      min = 0.01,
       max = 100_000.0,
       unit = "m",
       doc = "Size of a cell",
@@ -127,16 +137,18 @@ object ShallowParams:
       "seabed",
       default = 0,
       min = 0,
-      max = 2,
-      doc = "Sea floor: 0 flat, 1 a shelf that rises toward the right, 2 a seamount",
+      max = 4,
+      doc =
+        "Sea floor: 0 flat, 1 a shelf, 2 a seamount, 3 a plane beach, 4 a beach with a bay (3 and 4 need flooding)",
       restart = true
     ),
     ParamSpec(
       "start",
       default = 0,
       min = 0,
-      max = 2,
-      doc = "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave",
+      max = 4,
+      doc =
+        "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave",
       restart = true
     ),
     ParamSpec(
@@ -149,7 +161,32 @@ object ShallowParams:
       restart = true
     ),
     ParamSpec("nx", default = 128, min = 16, max = 512, doc = "Grid columns", restart = true),
-    ParamSpec("ny", default = 96, min = 16, max = 512, doc = "Grid rows", restart = true)
+    ParamSpec("ny", default = 96, min = 16, max = 512, doc = "Grid rows", restart = true),
+    ParamSpec(
+      "flooding",
+      default = 0,
+      min = 0,
+      max = 1,
+      doc = "0 a coast is a wall, 1 water floods and dries the land (needs nonlinear = 1)",
+      restart = true
+    ),
+    ParamSpec(
+      "dryDepth",
+      default = 0.01,
+      min = 1e-6,
+      max = 10.0,
+      unit = "m",
+      doc = "Water thinner than this over a sill does not flow (flooding only)"
+    ),
+    ParamSpec(
+      "slope",
+      default = 0.05,
+      min = 0.001,
+      max = 1.0,
+      unit = "m/m",
+      doc = "Slope of the beach of the sea floors 3 and 4: rise per distance",
+      restart = true
+    )
   )
 
 /**
@@ -223,6 +260,20 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   private val divergence = new Field2D(mac.cells)
   private val scratchC = new Field2D(mac.cells)
 
+  // Wetting and drying (flooding = 1). A dry cell keeps its surface at its bed, so a lake at rest
+  // has nothing to push the water; see [[Staggered]].
+  private var flooding = false
+  private var dryNow = 0.0
+  private val bed = new Field2D(mac.cells)
+  private val waterC = new Field2D(mac.cells)
+  private val sillU = new Field2D(mac.uFaces)
+  private val sillV = new Field2D(mac.vFaces)
+  private val wetU = new Field2D(mac.uFaces)
+  private val wetV = new Field2D(mac.vFaces)
+  private val scaleC = new Field2D(mac.cells)
+  private var maxRunupNow = 0.0
+  private var maxInundationNow = 0.0
+
   // What an absorbing strip keeps of a value in one step, at the cells and at the two kinds of
   // faces; null while there is no strip.
   private var keepC: Field2D = null
@@ -256,9 +307,13 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         i += 1
       j += 1
 
-  /** Land holds no water. */
+  /**
+   * Land holds no water. With flooding the surface of every cell is also put at or above its
+   * bed (water cannot be dug out of the floor), and the surface of land at rest.
+   */
   def clearLand(): Unit =
-    if land.count > 0 then
+    if flooding then settle()
+    else if land.count > 0 then
       var j = 0
       while j < ny do
         var i = 0
@@ -282,14 +337,46 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 
   /** The depth of the water in cell `(i, j)`, see [[refreshTotal]]. */
   private def thickness(i: Int, j: Int): Double =
-    val rest = depthNow * shape(i, j)
-    if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
+    if flooding then math.max(0.0, eta(i, j) - bed(i, j))
+    else
+      val rest = depthNow * shape(i, j)
+      if nonlinear then math.max(0.0, rest + eta(i, j)) else rest
 
   /** Takes the parameters that the measurements and the next step need. */
   def configure(p: ShallowParams): Unit =
     nonlinear = p.nonlinear != 0
     depthNow = p.depth
     gravityNow = p.gravity
+    flooding = p.flooding != 0
+    dryNow = p.dryDepth
+    if flooding then refreshBed()
+
+  /** The bed, in m above the level of the sea at rest: minus the depth at rest. */
+  private def refreshBed(): Unit =
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        bed(i, j) = -depthNow * shape(i, j)
+        i += 1
+      j += 1
+
+  /**
+   * With flooding: puts the surface of every cell at or above its bed and the surface of land
+   * at the level of rest, `max(0, bed)`. Call after the sea floor, the land or the surface was
+   * set from outside. Without flooding it does nothing.
+   */
+  def settle(): Unit =
+    if flooding then
+      refreshBed()
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) =
+            if land(i, j) then math.max(0.0, bed(i, j)) else math.max(eta(i, j), bed(i, j))
+          i += 1
+        j += 1
 
   /**
    * Makes the outer `width` cells absorb waves: every step they keep a smaller part of the
@@ -338,7 +425,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       while j < ny do
         var i = 0
         while i < nx do
-          eta(i, j) *= keepC(i, j)
+          if flooding then
+            val rest = math.max(0.0, bed(i, j))
+            eta(i, j) = rest + (eta(i, j) - rest) * keepC(i, j)
+          else eta(i, j) *= keepC(i, j)
           i += 1
         i = 0
         while i <= nx do
@@ -383,6 +473,63 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         i += 1
       j += 1
 
+  /**
+   * The height equation with wetting and drying: the same `η -= dt ∇·(h u)`, with the depth over
+   * the sill of each face (see [[Staggered.sillDepthU]]), no flux through a face that is dry, and
+   * the outflow of every cell cut to the water it holds. The volume stays exact, no cell gets
+   * less than 0 of water, and the surface of a dry cell stays at its bed.
+   */
+  private def floodContinuity(dt: Double): Unit =
+    val u = this.u
+    val v = this.v
+    Staggered.waterDepth(eta, bed, waterC)
+    Staggered.sillDepthU(eta, bed, dryNow, wrapX, sillU, wetU)
+    Staggered.sillDepthV(eta, bed, dryNow, sillV, wetV)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i <= nx do
+        fluxU(i, j) = openU(i, j) * wetU(i, j) * sillU(i, j) * u(i, j)
+        i += 1
+      j += 1
+    j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        fluxV(i, j) = openV(i, j) * wetV(i, j) * sillV(i, j) * v(i, j)
+        i += 1
+      j += 1
+    Staggered.limitOutflow(fluxU, fluxV, waterC, dt, mac.h, wrapX, scaleC)
+    Mac.divergence(fluxU, fluxV, divergence)
+    j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        eta(i, j) = math.max(bed(i, j), eta(i, j) - dt * divergence(i, j))
+        i += 1
+      j += 1
+
+  /** Stops the flow through the faces that carry no water, from the surface as it is now. */
+  private def stopDryFaces(): Unit =
+    val u = this.u
+    val v = this.v
+    Staggered.sillDepthU(eta, bed, dryNow, wrapX, sillU, wetU)
+    Staggered.sillDepthV(eta, bed, dryNow, sillV, wetV)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i <= nx do
+        if wetU(i, j) == 0.0 then u(i, j) = 0.0
+        i += 1
+      j += 1
+    j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        if wetV(i, j) == 0.0 then v(i, j) = 0.0
+        i += 1
+      j += 1
+
   /** The flow carries itself along: `u` and `v` advected by the flow, semi-Lagrangian. */
   private def advectVelocity(dt: Double): Unit =
     val from = cur
@@ -421,14 +568,88 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           v(i, j) += dt * (-g * (eta(i, j) - eta(i, j - 1)) * inv + f * uAtV(i, j) - r * v(i, j))
         i += 1
       j += 1
+    if flooding then stopDryFaces()
 
   /** One step of size `dt`. */
   def step(p: ShallowParams, dt: Double): Unit =
     configure(p)
-    continuity(dt)
+    if flooding then floodContinuity(dt) else continuity(dt)
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
     absorb()
+    if flooding then trackFlood()
+
+  /** Keeps the highest run-up and the deepest water over the shore that the run has seen. */
+  private def trackFlood(): Unit =
+    maxRunupNow = math.max(maxRunupNow, runup)
+    maxInundationNow = math.max(maxInundationNow, inundation)
+
+  /** Whether the cell is a sea or shore cell with water over its bed (more than `dryDepth`). */
+  private def isWet(i: Int, j: Int): Boolean =
+    !land(i, j) && eta(i, j) - bed(i, j) > dryNow
+
+  /** The share of the cells that are not land and hold water; 0 without flooding. */
+  def wetFraction: Double =
+    if !flooding then 0.0
+    else
+      var wet = 0
+      var open = 0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if !land(i, j) then
+            open += 1
+            if isWet(i, j) then wet += 1
+          i += 1
+        j += 1
+      if open == 0 then 0.0 else wet.toDouble / open
+
+  /** The area of the shore (the floor above the sea at rest) that is under water, in m². */
+  def floodedArea: Double =
+    if !flooding then 0.0
+    else
+      var n = 0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then n += 1
+          i += 1
+        j += 1
+      n * mac.h * mac.h
+
+  /** The highest surface over the shore now, in m above the sea at rest; 0 if the shore is dry. */
+  def runup: Double =
+    var best = 0.0
+    if flooding then
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then best = math.max(best, eta(i, j))
+          i += 1
+        j += 1
+    best
+
+  /** The deepest water over the shore now, in m. */
+  def inundation: Double =
+    var best = 0.0
+    if flooding then
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          if bed(i, j) > 0.0 && isWet(i, j) then best = math.max(best, eta(i, j) - bed(i, j))
+          i += 1
+        j += 1
+    best
+
+  /** The highest run-up of the run so far, in m. */
+  def maxRunup: Double = maxRunupNow
+
+  /** The deepest water over the shore that the run has seen, in m. */
+  def maxInundation: Double = maxInundationNow
 
   /** Paints land or height, see [[Shallow.intervene]]. */
   def applyBrush(target: String, disc: Disc, op: Op, value: Double): Unit =
@@ -439,6 +660,23 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       case _ =>
         val _ = Brush(eta, disc, wrapX, false, op, value)
         clearLand()
+
+  /**
+   * Sets the sea floor from `raster`, the height of the ground in m above the level of the sea
+   * (negative under the sea), stretched over the whole grid with the north at the top. The
+   * surface is put back above the floor, so a basin stays at rest.
+   */
+  def loadSeafloor(raster: Raster, p: ShallowParams): Unit =
+    configure(p)
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val z = raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
+        shape(i, j) = -z / p.depth
+        i += 1
+      j += 1
+    settle()
 
   /** Adds a Gaussian of height (`amplitude` negative lowers) centred at `(x, y)` in cells. */
   def applyPulse(x: Double, y: Double, sigma: Double, amplitude: Double): Unit =
@@ -457,6 +695,37 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       var i = 0
       while i < nx do
         out(k) = depthNow * shape(i, j)
+        k += 1
+        i += 1
+      j += 1
+
+  /**
+   * Writes the depth of the water, row by row, from `offset`: with flooding the height of the
+   * surface over the bed (0 where it is dry), without it the depth at rest plus the height.
+   */
+  def waterInto(out: Array[Double], offset: Int): Unit =
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        out(k) =
+          if land(i, j) then 0.0
+          else if flooding then math.max(0.0, eta(i, j) - bed(i, j))
+          else math.max(0.0, depthNow * shape(i, j) + eta(i, j))
+        k += 1
+        i += 1
+      j += 1
+
+  /** Writes 1 for land and for a dry cell of the shore, 0 for a cell with water. */
+  def dryInto(out: Array[Double], offset: Int): Unit =
+    var k = offset
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val dry = land(i, j) || (flooding && !isWet(i, j))
+        out(k) = if dry then 1.0 else 0.0
         k += 1
         i += 1
       j += 1
@@ -495,7 +764,18 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       j += 1
 
   /** The volume of water above rest, `∫ η`, in m³. */
-  def volume: Double = eta.sum * mac.h * mac.h
+  def volume: Double =
+    if flooding then
+      var sum = 0.0
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          sum += eta(i, j) - math.max(0.0, bed(i, j))
+          i += 1
+        j += 1
+      sum * mac.h * mac.h
+    else eta.sum * mac.h * mac.h
 
   /**
    * The energy per unit of density, `½ ∫ (g η² + h |u|²)`, in m⁵/s²: the potential energy of the
@@ -512,7 +792,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       var i = 0
       while i < nx do
         val e = eta(i, j)
-        potential += e * e
+        if flooding then
+          val rest = math.max(0.0, bed(i, j))
+          potential += e * e - rest * rest
+        else potential += e * e
         if openU(i, j) != 0.0 then
           val west = if i > 0 then thickness(i - 1, j) else thickness(nx - 1, j)
           kinetic += 0.5 * (west + thickness(i, j)) * u(i, j) * u(i, j)
@@ -543,12 +826,19 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
    * width, then rises linearly to a twentieth of the depth at 90% and stays there; 2 is a
    * Gaussian seamount in the middle that takes away 80% of the depth at its top.
    */
-  def seabed(kind: Int): Unit =
+  def seabed(kind: Int, slope: Double = Shallow.DefaultSlope): Unit =
     var j = 0
     while j < ny do
       var i = 0
       while i < nx do
         shape(i, j) = kind match
+          case 3 => beachShape(i + 0.5, slope)
+          case 4 =>
+            val dy = j + 0.5 - 0.5 * ny
+            val sigma = Shallow.BayWidth * ny
+            val ramp = math.min(1.0, math.max(0.0, (i + 0.5 - Shallow.BeachToe * nx) / (0.1 * nx)))
+            beachShape(i + 0.5, slope) +
+              Shallow.BayDepth * math.exp(-dy * dy / (2.0 * sigma * sigma)) * ramp
           case 1 =>
             val x = (i + 0.5) / nx
             if x <= 0.55 then 1.0
@@ -562,6 +852,73 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
           case _ => 1.0
         i += 1
       j += 1
+
+  /**
+   * The depth at rest, as a fraction of the depth, of a plane beach at `x` cells from the left:
+   * 1 up to [[Shallow.BeachToe]] of the width, then the floor rises by `slope` m per m, which
+   * takes the fraction below 0 where the floor comes out of the water.
+   */
+  private def beachShape(x: Double, slope: Double): Double =
+    val toe = Shallow.BeachToe * nx
+    if x <= toe then 1.0 else 1.0 - slope * (x - toe) * mac.h / depthNow
+
+  /** `sech²` of `x`, without overflow. */
+  private def sech2(x: Double): Double =
+    val c = math.cosh(x)
+    if c.isInfinite then 0.0 else 1.0 / (c * c)
+
+  /**
+   * A solitary wave of height `amp` going right, standing at [[Shallow.WaveStart]] of the width:
+   * `η = amp sech²((x - x0) / w)` with the speed of the water `u = c η / (h + η)`, `c = √(g (h + amp))`,
+   * which is the solitary wave of the nonlinear equations when `w = √(4 h³ / 3 amp)` is wider than
+   * a few cells ([[Shallow.waveWidth]] widens it to five cells otherwise).
+   */
+  def solitary(p: ShallowParams): Unit =
+    if p.amp > 0.0 then
+      val u = this.u
+      val w = Shallow.waveWidth(p)
+      val x0 = Shallow.WaveStart * nx * p.dx
+      val c = math.sqrt(p.gravity * (p.depth + p.amp))
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) = p.amp * sech2(((i + 0.5) * p.dx - x0) / w)
+          i += 1
+        i = 0
+        while i <= nx do
+          val e = p.amp * sech2((i * p.dx - x0) / w)
+          u(i, j) = c * e / (p.depth + e)
+          i += 1
+        j += 1
+      closeFaces()
+
+  /**
+   * An N-wave of height `amp` going right: a hump of `amp` with a dip of `amp` three widths ahead
+   * of it, `η = amp (sech²((x - x0) / w) - sech²((x - x0 - 3 w) / w))`, with the speed of the water of a
+   * linear wave, `u = η √(g / h)`. It floods nothing at first and brings the sea back from the
+   * shore before the crest, as a tsunami can.
+   */
+  def nWave(p: ShallowParams): Unit =
+    if p.amp > 0.0 then
+      val u = this.u
+      val w = Shallow.waveWidth(p)
+      val x0 = Shallow.WaveStart * nx * p.dx
+      val k = math.sqrt(p.gravity / p.depth)
+      def height(x: Double): Double =
+        p.amp * (sech2((x - x0) / w) - sech2((x - x0 - 3.0 * w) / w))
+      var j = 0
+      while j < ny do
+        var i = 0
+        while i < nx do
+          eta(i, j) = height((i + 0.5) * p.dx)
+          i += 1
+        i = 0
+        while i <= nx do
+          u(i, j) = k * height(i * p.dx)
+          i += 1
+        j += 1
+      closeFaces()
 
   /**
    * A step in the height across the middle of the domain: `amp` in the northern half (the top
@@ -615,9 +972,12 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     closeFaces()
 
 object ShallowState:
-  /** Live runs export the height, the speed, the vorticity, the depth and the land. */
+  /**
+   * Live runs export the height, the speed, the vorticity, the depth, the land, the depth of the
+   * water and where it is dry.
+   */
   given stateExport: StateExport[ShallowState] with
-    def size(state: ShallowState): Int = 5 * state.mac.cells.cells
+    def size(state: ShallowState): Int = 7 * state.mac.cells.cells
 
     def copyInto(state: ShallowState, out: Array[Double]): Unit =
       val n = state.mac.cells.cells
@@ -626,6 +986,8 @@ object ShallowState:
       state.vorticityInto(out, 2 * n)
       state.depthInto(out, 3 * n)
       state.land.field.copyInteriorInto(out, 4 * n)
+      state.waterInto(out, 5 * n)
+      state.dryInto(out, 6 * n)
 
     override def layout(state: ShallowState): IndexedSeq[Slice] =
       val g = state.mac.cells
@@ -635,7 +997,9 @@ object ShallowState:
         Slice("speed", n, g.nx, g.ny),
         Slice("vorticity", 2 * n, g.nx, g.ny),
         Slice("depth", 3 * n, g.nx, g.ny),
-        Slice("land", 4 * n, g.nx, g.ny)
+        Slice("land", 4 * n, g.nx, g.ny),
+        Slice("water", 5 * n, g.nx, g.ny),
+        Slice("dry", 6 * n, g.nx, g.ny)
       )
 
 object Shallow extends Model[ShallowParams]:
@@ -675,6 +1039,28 @@ object Shallow extends Model[ShallowParams]:
   /** The depth over the top of the shelf of seabed 1, as a fraction of the depth. */
   val ShelfDepth: Double = 0.05
 
+  /** The slope of the beach of the sea floors 3 and 4 when none is given, in m per m. */
+  val DefaultSlope: Double = 0.05
+
+  /** Where the beach starts to rise, as a fraction of the width. */
+  val BeachToe: Double = 0.5
+
+  /** Where the wave of the starts 3 and 4 stands, as a fraction of the width. */
+  val WaveStart: Double = 0.25
+
+  /** How much deeper the bay of the sea floor 4 is than the beach, as a fraction of the depth. */
+  val BayDepth: Double = 0.3
+
+  /** The width of the bay of the sea floor 4, as a fraction of the number of rows. */
+  val BayWidth: Double = 0.1
+
+  /**
+   * The width `w` of the waves of the starts 3 and 4, in m: that of a solitary wave of height
+   * `amp`, `√(4 h³ / (3 amp))`, but never under five cells, which the grid could not carry.
+   */
+  def waveWidth(p: ShallowParams): Double =
+    math.max(math.sqrt(4.0 * p.depth * p.depth * p.depth / (3.0 * p.amp)), 5.0 * p.dx)
+
   /** Width of the smoothed front of [[ShallowState.front]], in cells. */
   val FrontWidth: Double = 3.0
 
@@ -699,7 +1085,13 @@ object Shallow extends Model[ShallowParams]:
     stepping match
       case Stepping.Fixed(dt) =>
         val c = courant(p, dt)
-        if c > MaxCourant then
+        if p.seabed >= 3 && p.flooding == 0 then
+          Left("the sea floors 3 and 4 rise out of the water: they need flooding = 1")
+        else if p.flooding != 0 && p.nonlinear == 0 then
+          Left(
+            "flooding needs the nonlinear equations (nonlinear = 1): a linear sea has no depth to dry out"
+          )
+        else if c > MaxCourant then
           Left(
             f"the waves cross $c%.2f cells per step; the step needs at most $MaxCourant%.1f " +
               f"(lower the depth or gravity, make the cells larger, or use dt <= ${MaxCourant * p.dx / waveSpeed(p)}%.0f s)"
@@ -722,12 +1114,15 @@ object Shallow extends Model[ShallowParams]:
   def init(p: ShallowParams, rng: SplittableRng): ShallowState =
     val state = new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
     state.configure(p)
-    state.seabed(p.seabed)
+    state.seabed(p.seabed, p.slope)
     if p.edges == OpenSea then state.sponge(p.sponge)
     p.start match
       case 1 => state.front(p.amp)
       case 2 => state.rossby(p)
+      case 3 => state.solitary(p)
+      case 4 => state.nWave(p)
       case _ => ()
+    state.settle()
     state
 
   def advance(state: ShallowState, p: ShallowParams, dt: Double, ctx: StepContext): Unit =
@@ -748,6 +1143,11 @@ object Shallow extends Model[ShallowParams]:
     case Intervention.Pulse(target, _, _, _, _) =>
       Left(s"shallow water has no field '$target' to pulse (use 'height')")
     case _: Intervention.Disturb => Left("shallow water has no agents to disturb")
+    case Intervention.Load("seafloor", _, digest) =>
+      if Rasters.get(digest).isDefined then Right(())
+      else Left(f"the sea floor with digest $digest%016x has not been read")
+    case Intervention.Load(target, _, _) =>
+      Left(s"shallow water has no field '$target' to load (use 'seafloor')")
 
   /**
    * `Brush("land")` paints land (the water in those cells is lost with them) or, with `Erase`,
@@ -759,13 +1159,20 @@ object Shallow extends Model[ShallowParams]:
       p: ShallowParams,
       iv: Intervention
   ): Either[String, Unit] =
-    accepts(iv).map { _ =>
+    accepts(iv).flatMap { _ =>
       iv match
         case Intervention.Brush(target, disc, op, value) =>
           state.applyBrush(target, disc, op, value)
+          Right(())
         case Intervention.Pulse(_, x, y, sigma, amplitude) =>
           state.applyPulse(x, y, sigma, amplitude)
-        case _ => ()
+          Right(())
+        case Intervention.Load(_, _, digest) =>
+          if p.flooding == 0 then Left("a sea floor from a file needs flooding = 1")
+          else
+            Rasters.get(digest).foreach(state.loadSeafloor(_, p))
+            Right(())
+        case _ => Right(())
     }
 
   /** The volume of water above rest, in m³: constant unless something is painted or absorbed. */
@@ -786,5 +1193,35 @@ object Shallow extends Model[ShallowParams]:
   val maxSpeed: Probe[ShallowState] =
     Probe[ShallowState]("max_speed", "m/s")((s, _) => s.maxSpeed)
 
+  /** The share of the sea and shore cells that hold water; 0 without flooding. */
+  val wetFraction: Probe[ShallowState] =
+    Probe[ShallowState]("wet_fraction", "1")((s, _) => s.wetFraction)
+
+  /** The area of the shore under water, in m²; 0 without flooding. */
+  val floodedArea: Probe[ShallowState] =
+    Probe[ShallowState]("flooded_area", "m²")((s, _) => s.floodedArea)
+
+  /** The highest surface over the shore now, in m above the sea at rest; 0 if it is dry. */
+  val runup: Probe[ShallowState] = Probe[ShallowState]("runup", "m")((s, _) => s.runup)
+
+  /** The highest run-up of the run so far, in m. */
+  val maxRunup: Probe[ShallowState] =
+    Probe[ShallowState]("max_runup", "m")((s, _) => s.maxRunup)
+
+  /** The deepest water over the shore that the run has seen, in m. */
+  val maxInundation: Probe[ShallowState] =
+    Probe[ShallowState]("max_inundation", "m")((s, _) => s.maxInundation)
+
   val probes: Vector[Probe[ShallowState]] =
-    Vector(mass, energy, maxHeight, minHeight, maxSpeed)
+    Vector(
+      mass,
+      energy,
+      maxHeight,
+      minHeight,
+      maxSpeed,
+      wetFraction,
+      floodedArea,
+      runup,
+      maxRunup,
+      maxInundation
+    )

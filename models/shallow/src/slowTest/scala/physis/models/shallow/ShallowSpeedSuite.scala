@@ -56,6 +56,33 @@ class ShallowSpeedSuite extends munit.FunSuite:
     assert(rate >= 0.2e6, f"${rate / 1e6}%.2f million cell updates per second")
   }
 
+  test("the flooding step updates cells fast enough on 256 x 256, with a wave on the beach") {
+    val p = ShallowParams(
+      gravity = 9.81,
+      depth = 100.0,
+      dx = 2_500.0,
+      f0 = 0.0,
+      beta = 0.0,
+      friction = 0.0,
+      nonlinear = 1,
+      edges = Shallow.OpenSea,
+      sponge = 10,
+      seabed = 3,
+      start = 3,
+      amp = 6.0,
+      nx = N,
+      ny = N,
+      flooding = 1,
+      dryDepth = 0.5,
+      slope = 0.002
+    )
+    val r = Physis.model(Shallow).withParams(p).stepping(Shallow.stepping).seed(1L).build()
+    val rate = best(r)
+    println(SpeedReport.record("shallow flooding cell updates 256x256", rate / 1e6, "million/s"))
+    assert(rate >= 0.2e6, f"${rate / 1e6}%.2f million cell updates per second")
+    assert(r.state.volume.isFinite && r.state.eta.min >= -100.0 - 1e-9)
+  }
+
   test("the default sea takes under 40 ms a step") {
     val r = Physis
       .model(Shallow)

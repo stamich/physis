@@ -499,6 +499,7 @@ object Convection extends Model[ConvectionParams]:
     case Intervention.Pulse(target, _, _, _, _) =>
       Left(s"convection has no field '$target' to pulse (use 'heat')")
     case _: Intervention.Disturb => Left("convection has no agents to disturb")
+    case _: Intervention.Load => Left("convection reads no files")
 
   override def intervene(
       state: ConvectionState,

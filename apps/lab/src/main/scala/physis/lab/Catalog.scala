@@ -595,6 +595,11 @@ object Catalog:
       LabTool(
         ToolSpec("Erase land", None, 0.0, (0.0, 0.0), (1.0, 20.0), 6.0),
         (d, r, _, _) => Intervention.Brush("land", Disc(d.x, d.y, r), Op.Erase, 0.0)
+      ),
+      LabTool(
+        ToolSpec("Water level", Some("metres"), 0.5, (0.05, 5.0), (3.0, 60.0), 20.0),
+        (d, r, v, secondary) =>
+          Intervention.Brush("height", Disc(d.x, d.y, r), Op.Add, if secondary then -v else v)
       )
     ),
     wrap = p => p.getOrElse("edges", 0.0) == Shallow.Channel.toDouble,

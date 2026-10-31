@@ -7,7 +7,18 @@ class ShallowProbesSuite extends munit.FunSuite:
   test("the probes are in the order the views read them") {
     assertEquals(
       Shallow.probes.map(_.name),
-      Vector("mass", "energy", "max_height", "min_height", "max_speed")
+      Vector(
+        "mass",
+        "energy",
+        "max_height",
+        "min_height",
+        "max_speed",
+        "wet_fraction",
+        "flooded_area",
+        "runup",
+        "max_runup",
+        "max_inundation"
+      )
     )
   }
 

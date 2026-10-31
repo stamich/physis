@@ -1,6 +1,6 @@
 package physis.cli
 
-import java.io.PrintStream
+import java.io.{IOException, PrintStream}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 
@@ -15,6 +15,7 @@ import physis.core.run.{
   Op,
   ParamEvent,
   Physis,
+  Rasters,
   Run
 }
 import physis.core.sweep.{ParamGrid, PointResult, Sweep, SweepOutput, SweepSetup}
@@ -34,7 +35,7 @@ import physis.models.pendulum.{Pendulum, PendulumParams}
 import physis.models.physarum.{Physarum, PhysarumParams, PhysarumState, PhysarumViews}
 import physis.models.wave.{Wave, WaveParams, WaveState, WaveViews}
 import physis.ode.OdeState
-import physis.netcdf.{Attr, NcCompare, NcExport, NcFile}
+import physis.netcdf.{Attr, NcCompare, NcExport, NcFile, NcRaster}
 import physis.view.{Frame, Frames, Montage, Png, View}
 
 /**
@@ -78,6 +79,10 @@ object Headless:
       |  --stroke <spec>        a stroke at a step, recorded in the manifest (repeatable):
       |                         STEP:brush:TARGET:X:Y:R:OP:VALUE (OP is set, add or erase),
       |                         STEP:pulse:TARGET:X:Y:SIGMA:AMPLITUDE, STEP:disturb:X:Y:R:STRENGTH
+      |  --bathymetry <file.nc> the sea floor of a shallow run from a NetCDF file: the variable
+      |                         'elevation' (m, negative under water) on two dimensions; the
+      |                         manifest keeps the file name and digest, replay refuses a
+      |                         changed file
       |  --replay <path>        re-run the manifest at <path>, with its parameter changes and
       |                         strokes; other options are ignored except --frames, --animate,
       |                         --manifest and --stroke (more strokes end the digest check)
@@ -142,6 +147,7 @@ object Headless:
       fps: Int = 12,
       loops: Int = 0,
       strokes: Vector[InterventionEvent] = Vector.empty,
+      bathymetry: Option[Path] = None,
       every: Option[Long] = None,
       scale: Int = 1,
       colorBar: Boolean = true,
@@ -304,6 +310,8 @@ object Headless:
         whole(v, "--loops", 0L)
           .filterOrElse(_ <= 65535L, s"--loops must be at most 65535, got $v")
           .flatMap(n => parse(rest, options.copy(loops = n.toInt)))
+      case "--bathymetry" :: path :: rest =>
+        parse(rest, options.copy(bathymetry = Some(Path.of(path))))
       case "--stroke" :: spec :: rest =>
         stroke(spec).flatMap(e => parse(rest, options.copy(strokes = options.strokes :+ e)))
       case "--sweep" :: axis :: rest => parse(rest, options.copy(sweep = options.sweep :+ axis))
@@ -444,7 +452,50 @@ object Headless:
           Left(unknownModel(o.model))
         case Some(found) =>
           val entry = found.asInstanceOf[Entry[Any, Any]]
-          withPreset(entry, o).flatMap(withPreset => executeEntry(entry, withPreset, out, err))
+          withInputs(o)
+            .flatMap(withPreset(entry, _))
+            .flatMap(withPreset => executeEntry(entry, withPreset, out, err))
+
+  /**
+   * Reads the file at `file` and makes its raster available to the run. With `expected` the
+   * file must have that digest: a replay refuses a file that is not the one that was used.
+   */
+  private def loadFile(file: String, expected: Option[Long]): Either[String, Long] =
+    val read =
+      try Right(Files.readAllBytes(Path.of(file)))
+      catch case e: IOException => Left(s"cannot read $file: ${e.getMessage}")
+    read.flatMap { bytes =>
+      val digest = Rasters.digestOf(bytes)
+      expected match
+        case Some(d) if d != digest =>
+          Left(f"$file is not the file of the run: digest $digest%016x, the manifest has $d%016x")
+        case _ =>
+          NcRaster.read(bytes).left.map(m => s"$file: $m").map { raster =>
+            Rasters.register(digest, raster)
+            digest
+          }
+    }
+
+  /**
+   * Reads the files that the run needs: those named by `--bathymetry` (which adds a `Load`
+   * stroke at step 0) and those that a manifest's `Load` interventions name, checked by digest.
+   */
+  private def withInputs(o: Options): Either[String, Options] =
+    val named = (o.interventions ++ o.strokes).collect {
+      case InterventionEvent(_, Intervention.Load(_, file, digest)) => (file, digest)
+    }.distinct
+    val checked = named.foldLeft[Either[String, Unit]](Right(())) { (done, load) =>
+      done.flatMap(_ => loadFile(load._1, Some(load._2)).map(_ => ()))
+    }
+    checked.flatMap { _ =>
+      o.bathymetry match
+        case None => Right(o)
+        case Some(path) =>
+          loadFile(path.toString, None).map { digest =>
+            val load = InterventionEvent(0L, Intervention.Load("seafloor", path.toString, digest))
+            o.copy(strokes = load +: o.strokes)
+          }
+    }
 
   /** `o` with the values of its preset below its own `--param` values. */
   private def withPreset(entry: Entry[Any, Any], o: Options): Either[String, Options] =

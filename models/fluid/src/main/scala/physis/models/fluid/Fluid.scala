@@ -578,6 +578,7 @@ object Fluid extends Model[FluidParams]:
     case Intervention.Pulse(target, _, _, _, _) =>
       Left(s"fluid has no field '$target' to pulse (use 'u', 'v' or 'dye')")
     case _: Intervention.Disturb => Left("fluid has no agents to disturb")
+    case _: Intervention.Load => Left("fluid reads no files")
 
   override def intervene(
       state: FluidState,

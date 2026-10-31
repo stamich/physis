@@ -47,6 +47,13 @@ enum Intervention:
   /** Turns the agents inside `disc` away from its centre by `strength` radians. */
   case Disturb(disc: Disc, strength: Double)
 
+  /**
+   * Fills the field `target` (a sea floor, say) from a file. The file itself is not part of the
+   * manifest, only its name and its [[Rasters.digestOf digest]]: a replay reads the file again
+   * and refuses it if the digest differs.
+   */
+  case Load(target: String, file: String, digest: Long)
+
   /** Describes what is wrong with this intervention, if anything. */
   def validate: Option[String] = this match
     case Brush(target, disc, _, value) =>
@@ -62,6 +69,10 @@ enum Intervention:
         .orElse(checkFinite("amplitude", amplitude))
     case Disturb(disc, strength) =>
       checkDisc(disc).orElse(checkFinite("strength", strength))
+    case Load(target, file, _) =>
+      checkTarget(target).orElse(
+        if file.nonEmpty then None else Some("a file to load must have a name")
+      )
 
   private def checkTarget(target: String): Option[String] =
     if target.nonEmpty then None else Some("intervention target must not be empty")
@@ -106,6 +117,7 @@ object Intervention:
             "amplitude" -> Json.num(amplitude)
           )
         )
+      case Load(target, file, digest) => loadJson(target, file, digest)
       case Disturb(d, strength) =>
         Json.JObj(
           Vector(
@@ -116,6 +128,16 @@ object Intervention:
             "strength" -> Json.num(strength)
           )
         )
+
+  private def loadJson(target: String, file: String, digest: Long): Json =
+    Json.JObj(
+      Vector(
+        "kind" -> Json.JStr("load"),
+        "target" -> Json.JStr(target),
+        "file" -> Json.JStr(file),
+        "digest" -> Json.num(digest)
+      )
+    )
 
   private[run] def fromJson(json: Json): Either[String, Intervention] =
     val parsed = json.field("kind").flatMap(_.asString).flatMap {
@@ -143,6 +165,12 @@ object Intervention:
           r <- json.field("r").flatMap(_.asDouble)
           strength <- json.field("strength").flatMap(_.asDouble)
         yield Disturb(Disc(x, y, r), strength)
+      case "load" =>
+        for
+          target <- json.field("target").flatMap(_.asString)
+          file <- json.field("file").flatMap(_.asString)
+          digest <- json.field("digest").flatMap(_.asLong)
+        yield Load(target, file, digest)
       case other => Left(s"unknown intervention kind '$other'")
     }
     parsed.flatMap(iv => iv.validate.toLeft(iv))

@@ -112,3 +112,132 @@ object Staggered:
         out(i, j) = 0.25 * sum
         i += 1
       j += 1
+
+  // --- Wetting and drying -------------------------------------------------------------------
+  //
+  // A cell is wet when the surface `eta` stands above the bed `bed` (both measured from the same
+  // level, up is positive). A dry cell keeps `eta == bed`, so a lake at rest has no slope to push
+  // the water anywhere and the depth of a cell is always `eta - bed`.
+
+  /** The depth of the water in a cell: `eta - bed`, never below 0. */
+  def waterDepth(eta: Field2D, bed: Field2D, out: Field2D): Unit =
+    var j = 0
+    while j < eta.ny do
+      var i = 0
+      while i < eta.nx do
+        out(i, j) = math.max(0.0, eta(i, j) - bed(i, j))
+        i += 1
+      j += 1
+
+  /**
+   * The depth of the water over the sill of every vertical face, and whether the face carries
+   * flow. Water stands over a sill only as high as the lower of the two surfaces allows: on each
+   * side the depth is `eta` minus the higher of the two beds, and the face depth is the mean of
+   * the two (so over a flat bed it is the mean depth of the two cells, as in [[meanToU]]). The
+   * face is `wet` (1) when either side has more than `eps` of water over the sill, and 0 when
+   * both have less; a face on the left or right border is dry unless `wrapX`.
+   */
+  def sillDepthU(
+      eta: Field2D,
+      bed: Field2D,
+      eps: Double,
+      wrapX: Boolean,
+      depth: Field2D,
+      wet: Field2D
+  ): Unit =
+    val nx = eta.nx
+    var j = 0
+    while j < eta.ny do
+      var i = 0
+      while i <= nx do
+        val l = if i > 0 then i - 1 else if wrapX then nx - 1 else -1
+        val r = if i < nx then i else if wrapX then 0 else -1
+        if l < 0 || r < 0 then
+          depth(i, j) = 0.0
+          wet(i, j) = 0.0
+        else
+          val sill = math.max(bed(l, j), bed(r, j))
+          val a = math.max(0.0, eta(l, j) - sill)
+          val b = math.max(0.0, eta(r, j) - sill)
+          depth(i, j) = 0.5 * (a + b)
+          wet(i, j) = if math.max(a, b) > eps then 1.0 else 0.0
+        i += 1
+      j += 1
+
+  /** The same for the horizontal faces; the faces on the bottom and top borders are dry. */
+  def sillDepthV(
+      eta: Field2D,
+      bed: Field2D,
+      eps: Double,
+      depth: Field2D,
+      wet: Field2D
+  ): Unit =
+    val ny = eta.ny
+    var j = 0
+    while j <= ny do
+      var i = 0
+      while i < eta.nx do
+        if j == 0 || j == ny then
+          depth(i, j) = 0.0
+          wet(i, j) = 0.0
+        else
+          val sill = math.max(bed(i, j - 1), bed(i, j))
+          val a = math.max(0.0, eta(i, j - 1) - sill)
+          val b = math.max(0.0, eta(i, j) - sill)
+          depth(i, j) = 0.5 * (a + b)
+          wet(i, j) = if math.max(a, b) > eps then 1.0 else 0.0
+        i += 1
+      j += 1
+
+  /**
+   * Scales the fluxes (depth times velocity, in m²/s) through the faces so that no cell gives
+   * away more water in a step of size `dt` than it holds: a cell whose outflow would take more
+   * than its depth `water` (m) has all its outflowing fluxes cut by the same factor. Inflow is
+   * never touched, so the depth stays at 0 or more and the volume stays exact. `scale` is
+   * scratch space of one value per cell. `h` is the size of a cell, in m.
+   */
+  def limitOutflow(
+      fluxU: Field2D,
+      fluxV: Field2D,
+      water: Field2D,
+      dt: Double,
+      h: Double,
+      wrapX: Boolean,
+      scale: Field2D
+  ): Unit =
+    val nx = water.nx
+    val ny = water.ny
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val out = math.max(0.0, fluxU(i + 1, j)) + math.max(0.0, -fluxU(i, j)) +
+          math.max(0.0, fluxV(i, j + 1)) + math.max(0.0, -fluxV(i, j))
+        val room = water(i, j) * h
+        scale(i, j) = if out * dt > room then room / (out * dt) else 1.0
+        i += 1
+      j += 1
+    j = 0
+    while j < ny do
+      var i = 0
+      while i <= nx do
+        val q = fluxU(i, j)
+        if q > 0.0 then
+          val l = if i > 0 then i - 1 else if wrapX then nx - 1 else -1
+          if l >= 0 then fluxU(i, j) = q * scale(l, j)
+        else if q < 0.0 then
+          val r = if i < nx then i else if wrapX then 0 else -1
+          if r >= 0 then fluxU(i, j) = q * scale(r, j)
+        i += 1
+      j += 1
+    j = 0
+    while j <= ny do
+      var i = 0
+      while i < nx do
+        val q = fluxV(i, j)
+        if q > 0.0 then
+          if j > 0 then fluxV(i, j) = q * scale(i, j - 1)
+        else if q < 0.0 then
+          if j < ny then fluxV(i, j) = q * scale(i, j)
+        i += 1
+      j += 1

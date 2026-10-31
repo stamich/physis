@@ -12,7 +12,7 @@ class ShallowLabSuite extends munit.FunSuite:
   test("shallow water offers uplift, drop and land whose strokes the model accepts") {
     assertEquals(
       Catalog.shallow.tools.map(_.spec.name),
-      Vector("Uplift", "Drop", "Land", "Erase land")
+      Vector("Uplift", "Drop", "Land", "Erase land", "Water level")
     )
     val run = Physis
       .model(Shallow)
@@ -35,6 +35,17 @@ class ShallowLabSuite extends munit.FunSuite:
     assertEquals(amplitude("Drop", true), 0.5)
   }
 
+  test("the water-level tool adds a flat layer with the left button and takes it with the right") {
+    tool("Water level").make(dab, 20.0, 0.5, false) match
+      case Intervention.Brush("height", _, op, v) =>
+        assertEquals(op, physis.core.run.Op.Add)
+        assertEquals(v, 0.5)
+      case other => fail(s"not a brush of height: $other")
+    tool("Water level").make(dab, 20.0, 0.5, true) match
+      case Intervention.Brush("height", _, _, v) => assertEquals(v, -0.5)
+      case other => fail(s"not a brush of height: $other")
+  }
+
   test("land is painted by the left button and taken away by the right one") {
     tool("Land").make(dab, 3.0, 0.0, false) match
       case Intervention.Brush("land", _, op, v) =>
@@ -53,7 +64,7 @@ class ShallowLabSuite extends munit.FunSuite:
   }
 
   test("every preset is offered, and the tsunami restarts with its sea floor raised") {
-    assertEquals(Catalog.shallow.presets.size, 5)
+    assertEquals(Catalog.shallow.presets.size, 7)
     val preset = Catalog.shallow.presets.find(_.name == "Tsunami").get
     Catalog.shallow.presetCommand(preset, Map.empty) match
       case physis.core.live.Command.Restart(values, _, Some(paint)) =>

@@ -26,7 +26,14 @@ object ShallowExport:
         "m",
         Some("sea_floor_depth_below_sea_surface")
       ),
-      FieldMeta("land", "land", "1 where there is land, 0 in the sea", "1")
+      FieldMeta("land", "land", "1 where there is land, 0 in the sea", "1"),
+      FieldMeta("water", "water", "depth of the water over the floor, 0 where it is dry", "m"),
+      FieldMeta(
+        "dry",
+        "dry",
+        "1 where there is land or the shore is dry, 0 where there is water",
+        "1"
+      )
     ),
     dx = p.dx,
     lengthUnits = "m",

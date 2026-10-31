@@ -150,4 +150,57 @@ object ShallowPresets:
       breakwater.toVector ++ Vector(island) ++ front
   )
 
-  val all: Vector[ShallowPreset] = Vector(tsunami, adjustment, rossby, kelvin, harbour)
+  val beachRunup: ShallowPreset = ShallowPreset(
+    "Beach run-up",
+    "A solitary wave, 6 m high in a sea 100 m deep, runs in over a plane beach and up it: " +
+      "the water floods the shore, stops, runs back and the shoreline retreats",
+    Map(
+      "gravity" -> 9.81,
+      "depth" -> 100.0,
+      "dx" -> 2_500.0,
+      "f0" -> 0.0,
+      "beta" -> 0.0,
+      "friction" -> 0.0,
+      "nonlinear" -> 1.0,
+      "flooding" -> 1.0,
+      "dryDepth" -> 0.5,
+      "slope" -> 0.002,
+      "edges" -> 2.0,
+      "sponge" -> 8.0,
+      "seabed" -> 3.0,
+      "start" -> 3.0,
+      "amp" -> 6.0,
+      "nx" -> 120.0,
+      "ny" -> 40.0
+    ),
+    none
+  )
+
+  val harbourFlood: ShallowPreset = ShallowPreset(
+    "Harbour flood",
+    "A solitary wave, 8 m high in a sea 100 m deep, comes ashore at a bay: the bay deepens " +
+      "the water in front of the shore and the flood reaches further inland there than beside it",
+    Map(
+      "gravity" -> 9.81,
+      "depth" -> 100.0,
+      "dx" -> 2_500.0,
+      "f0" -> 0.0,
+      "beta" -> 0.0,
+      "friction" -> 0.0,
+      "nonlinear" -> 1.0,
+      "flooding" -> 1.0,
+      "dryDepth" -> 0.5,
+      "slope" -> 0.002,
+      "edges" -> 2.0,
+      "sponge" -> 8.0,
+      "seabed" -> 4.0,
+      "start" -> 3.0,
+      "amp" -> 8.0,
+      "nx" -> 120.0,
+      "ny" -> 60.0
+    ),
+    none
+  )
+
+  val all: Vector[ShallowPreset] =
+    Vector(tsunami, adjustment, rossby, kelvin, harbour, beachRunup, harbourFlood)

@@ -16,7 +16,7 @@ class ShallowPresetsSuite extends munit.FunSuite:
     r
 
   test("every preset is valid for the schema and the stability guard") {
-    assertEquals(ShallowPresets.all.map(_.name).distinct.size, 5)
+    assertEquals(ShallowPresets.all.map(_.name).distinct.size, 7)
     ShallowPresets.all.foreach { preset =>
       val p = Shallow.params.fromValues(preset.params)
       assert(p.isRight, s"${preset.name}: $p")
@@ -45,6 +45,18 @@ class ShallowPresetsSuite extends munit.FunSuite:
         Manifest.fromJson(Manifest.toJson(manifest)).flatMap(Manifest.replay(_, registry))
       assertEquals(replay.map(_.execute().finalDigest), Right(r.digest), preset.name)
     }
+  }
+
+  test("the two shore presets flood: the wave reaches the land and the volume is exact") {
+    for preset <- Seq(ShallowPresets.beachRunup, ShallowPresets.harbourFlood) do
+      val r = build(preset)
+      var reach = 0.0
+      for _ <- 1 to 40 do
+        r.runSteps(25)
+        reach = math.max(reach, Shallow.maxRunup.measure(r.state, 0.0))
+      assert(reach > 0.0, s"${preset.name}: the wave never reached the shore")
+      assert(r.state.eta.min > -100.0 - 1e-6, preset.name)
+      assert(r.state.eta.max.isFinite, preset.name)
   }
 
   test("the closed and the wrapping presets keep their water") {

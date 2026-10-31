@@ -58,6 +58,49 @@ class LabDatasetsSuite extends munit.FunSuite:
     assert(a.schema.variable("height").isDefined)
   }
 
+  /** A beach run-up on a small grid, with a layer of water added by the Water level tool. */
+  private def flood(): Manifest =
+    val preset = Catalog.shallow.presets.find(_.name == "Beach run-up").get
+    val run = Physis
+      .model(Shallow)
+      .overrides(preset.values + ("nx" -> 60.0) + ("ny" -> 16.0))
+      .stepping(Shallow.stepping)
+      .seed(1L)
+      .build()
+    val level = Catalog.shallow.tools.find(_.spec.name == "Water level").get
+    val _ = run.intervene(level.make(physis.view.Dab(8.0, 6.0), 4.0, 0.5, false))
+    run.runSteps(150)
+    run.manifest(run.time).copy(steps = Some(150L), digest = Some(run.digest))
+
+  tmp.test("a flooding run exports what the command line replays, and verifies") { dir =>
+    val manifest = flood()
+    val file = dir.resolve("flood.nc")
+    val report = LabDatasets
+      .save(Catalog.shallow, manifest, Catalog.registry, file, DatasetOptions(every = 50))
+      .fold(e => fail(e), identity)
+    assertEquals(report.digest, manifest.digest.get)
+    val json = report.manifest.getOrElse(fail("no manifest written"))
+    val cli = dir.resolve("cli.nc")
+    val err = new ByteArrayOutputStream()
+    val quiet = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8)
+    val code = physis.cli.Cli.execute(
+      List("replay", json.toString, "--export", cli.toString, "--every", "50"),
+      quiet,
+      new PrintStream(err, true, StandardCharsets.UTF_8)
+    )
+    assertEquals(code, 0, err.toString(StandardCharsets.UTF_8))
+    val a = NcFile.read(file).fold(e => fail(e), identity)
+    val b = NcFile.read(cli).fold(e => fail(e), identity)
+    assertEquals(NcCompare.diff(a, b), None)
+    assert(a.schema.variable("water").isDefined && a.schema.variable("dry").isDefined)
+    val verify = physis.cli.Cli.execute(
+      List("verify", file.toString),
+      quiet,
+      new PrintStream(err, true, StandardCharsets.UTF_8)
+    )
+    assertEquals(verify, 0, err.toString(StandardCharsets.UTF_8))
+  }
+
   tmp.test("the file verifies against the manifest inside it") { dir =>
     val file = dir.resolve("lab.nc")
     LabDatasets

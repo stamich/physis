@@ -41,7 +41,7 @@ fields (Lorenz, the double pendulum and Boids) have only the probes.
 | Physarum | `trail`, `food` |
 | Fluids | `dye`, `vorticity`, `speed`, `wall` |
 | Convection | `temperature`, `deviation`, `vorticity`, `speed`, `wall` |
-| Shallow water | `height`, `speed`, `vorticity`, `depth`, `land` |
+| Shallow water | `height`, `speed`, `vorticity`, `depth`, `land`, `water`, `dry` |
 
 The variables carry `long_name`, `units` and, where CF has one, `standard_name` (the shallow
 sea's `height`, `speed` and `depth`). The global attributes are `Conventions = "CF-1.8"`, `title`,
