@@ -5,7 +5,19 @@ import physis.core.live.{Slice, StateExport}
 import physis.core.param.{ParamSchema, ParamSpec}
 import physis.core.random.SplittableRng
 import physis.core.run.{Disc, Intervention, Op, Raster, Rasters}
-import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Staggered}
+import physis.fields.{
+  Advect,
+  Brush,
+  Field2D,
+  Mac,
+  MacGrid,
+  Mask,
+  Pulse,
+  SphereAdvect,
+  SphereGrid,
+  SphereOps,
+  Staggered
+}
 
 /**
  * Parameters of the shallow-water model. Lengths are in metres, times in seconds.
@@ -35,6 +47,22 @@ import physis.fields.{Advect, Brush, Field2D, Mac, MacGrid, Mask, Pulse, Stagger
  * @param dryDepth the depth of water, in m, under which a face carries no flow: water thinner
  *                than this over a sill stays where it is
  * @param slope   how steep the beach of seabed 3 and 4 is, in m of rise per m (needs a restart)
+ * @param geometry 0 for a plane, 1 for a band of a sphere on a longitude–latitude grid (needs a
+ *                restart): `nx` columns go once round, `ny` rows span the latitudes ±`latMax`,
+ *                and `dx`, `f0` and `beta` are not used
+ * @param radius  the radius of the sphere, in m (needs a restart)
+ * @param rotation the angular speed Ω of the sphere, in rad/s: the Coriolis parameter is
+ *                `2 Ω sin(latitude)`
+ * @param latMax  the latitude of the edges of the band, in degrees (needs a restart); the edges
+ *                are walls, the poles are not on the grid
+ * @param polar   poleward of this latitude, in degrees, the fields are smoothed along the rows
+ *                after every step, so that the narrow cells near the edge of the band do not limit
+ *                the step (0 for no smoothing)
+ * @param watchLon the longitude of the point whose arrival time the `arrival` probe reports, in
+ *                degrees east (sphere only)
+ * @param watchLat its latitude, in degrees north
+ * @param arrivalLevel a wave has arrived where the surface first stands this far above or below
+ *                rest, in m (0 to stop recording arrivals; sphere only)
  */
 final case class ShallowParams(
     gravity: Double,
@@ -53,7 +81,15 @@ final case class ShallowParams(
     ny: Int,
     flooding: Int = 0,
     dryDepth: Double = 0.01,
-    slope: Double = 0.05
+    slope: Double = 0.05,
+    geometry: Int = 0,
+    radius: Double = 6.371e6,
+    rotation: Double = 7.292e-5,
+    latMax: Double = 80.0,
+    polar: Double = 0.0,
+    watchLon: Double = 0.0,
+    watchLat: Double = 0.0,
+    arrivalLevel: Double = 0.01
 )
 
 object ShallowParams:
@@ -70,7 +106,7 @@ object ShallowParams:
       "depth",
       default = 4000.0,
       min = 1.0,
-      max = 7000.0,
+      max = 12000.0,
       unit = "m",
       doc = "Depth of the water at rest: waves travel at sqrt(g depth)"
     ),
@@ -146,18 +182,19 @@ object ShallowParams:
       "start",
       default = 0,
       min = 0,
-      max = 4,
+      max = 6,
       doc =
-        "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave",
+        "How the run begins: 0 at rest, 1 a step in the height, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave, 5 a zonal flow and 6 a Rossby-Haurwitz wave (5 and 6 on the sphere)",
       restart = true
     ),
     ParamSpec(
       "amp",
       default = 0.2,
       min = 0.0,
-      max = 20.0,
+      max = 100.0,
       unit = "m",
-      doc = "Size of the start: the height of the step or of the wave",
+      doc =
+        "Size of the start: the height of the step or of the wave; start 5 the speed of the flow in m/s, start 6 the angular speed of the wave in 10^-6 rad/s",
       restart = true
     ),
     ParamSpec("nx", default = 128, min = 16, max = 512, doc = "Grid columns", restart = true),
@@ -186,6 +223,72 @@ object ShallowParams:
       unit = "m/m",
       doc = "Slope of the beach of the sea floors 3 and 4: rise per distance",
       restart = true
+    ),
+    ParamSpec(
+      "geometry",
+      default = 0,
+      min = 0,
+      max = 1,
+      doc = "0 a plane, 1 a band of a sphere on a longitude-latitude grid",
+      restart = true
+    ),
+    ParamSpec(
+      "radius",
+      default = 6.371e6,
+      min = 1e5,
+      max = 1e8,
+      unit = "m",
+      doc = "Radius of the sphere",
+      restart = true
+    ),
+    ParamSpec(
+      "rotation",
+      default = 7.292e-5,
+      min = 0.0,
+      max = 5e-4,
+      unit = "rad/s",
+      doc = "Angular speed of the sphere: the Coriolis parameter is 2 Ω sin(latitude)"
+    ),
+    ParamSpec(
+      "latMax",
+      default = 80.0,
+      min = 10.0,
+      max = 89.0,
+      unit = "°",
+      doc = "Latitude of the northern and southern edges of the band (walls)",
+      restart = true
+    ),
+    ParamSpec(
+      "polar",
+      default = 0.0,
+      min = 0.0,
+      max = 89.0,
+      unit = "°",
+      doc = "Poleward of this latitude the fields are smoothed along the rows (0 is off)"
+    ),
+    ParamSpec(
+      "watchLon",
+      default = 0.0,
+      min = -180.0,
+      max = 180.0,
+      unit = "°",
+      doc = "Longitude of the point whose arrival time is reported (sphere)"
+    ),
+    ParamSpec(
+      "watchLat",
+      default = 0.0,
+      min = -89.0,
+      max = 89.0,
+      unit = "°",
+      doc = "Latitude of the point whose arrival time is reported (sphere)"
+    ),
+    ParamSpec(
+      "arrivalLevel",
+      default = 0.01,
+      min = 0.0,
+      max = 10.0,
+      unit = "m",
+      doc = "A wave has arrived where the surface first moves this far from rest (0 is off)"
     )
   )
 
@@ -213,9 +316,28 @@ object ShallowParams:
  * the velocity from the new height. The Coriolis terms use the newest `u` for `v`, which keeps
  * the rotation from gaining energy.
  */
-final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
+final class ShallowState(
+    val mac: MacGrid,
+    val wrapX: Boolean,
+    val sphere: Option[SphereGrid] = None
+):
   private val nx = mac.nx
   private val ny = mac.ny
+
+  // The geometry of the sphere, or null on the plane; the plane's arithmetic is left as it was.
+  private val geo: SphereGrid = sphere.orNull
+  private val isSphere: Boolean = sphere.isDefined
+  private val fRowC = new Array[Double](ny)
+  private val fRowF = new Array[Double](ny + 1)
+  private val passesC = new Array[Int](ny)
+  private val passesF = new Array[Int](ny + 1)
+  private val rowBuffer = new Array[Double](nx)
+
+  // When the surface first moved by the arrival level, in s; -1 where it has not (sphere only).
+  private val arrivalMap = new Array[Double](nx * ny)
+  java.util.Arrays.fill(arrivalMap, -1.0)
+  private var clock = 0.0
+  private var watchCell = -1
 
   /** The height of the surface above rest, in m. */
   val eta: Field2D = new Field2D(mac.cells)
@@ -349,6 +471,24 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     gravityNow = p.gravity
     flooding = p.flooding != 0
     dryNow = p.dryDepth
+    if isSphere then
+      watchCell = geo.rowOf(p.watchLat) * nx + geo.columnOf(p.watchLon)
+      var j = 0
+      while j < ny do
+        fRowC(j) = 2.0 * p.rotation * geo.sinC(j)
+        j += 1
+      j = 0
+      while j <= ny do
+        fRowF(j) = 2.0 * p.rotation * geo.sinF(j)
+        j += 1
+      j = 0
+      while j < ny do
+        passesC(j) = Shallow.polarPasses(p.polar, math.toDegrees(geo.latC(j)))
+        j += 1
+      j = 0
+      while j <= ny do
+        passesF(j) = Shallow.polarPasses(p.polar, math.toDegrees(geo.latF(j)))
+        j += 1
     if flooding then refreshBed()
 
   /** The bed, in m above the level of the sea at rest: minus the depth at rest. */
@@ -464,7 +604,8 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         fluxV(i, j) = openV(i, j) * thickV(i, j) * v(i, j)
         i += 1
       j += 1
-    Mac.divergence(fluxU, fluxV, divergence)
+    if isSphere then SphereOps.divergence(fluxU, fluxV, geo, divergence)
+    else Mac.divergence(fluxU, fluxV, divergence)
     j = 0
     while j < ny do
       var i = 0
@@ -499,8 +640,12 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
         fluxV(i, j) = openV(i, j) * wetV(i, j) * sillV(i, j) * v(i, j)
         i += 1
       j += 1
-    Staggered.limitOutflow(fluxU, fluxV, waterC, dt, mac.h, wrapX, scaleC)
-    Mac.divergence(fluxU, fluxV, divergence)
+    if isSphere then
+      SphereOps.limitOutflow(fluxU, fluxV, waterC, dt, geo, scaleC)
+      SphereOps.divergence(fluxU, fluxV, geo, divergence)
+    else
+      Staggered.limitOutflow(fluxU, fluxV, waterC, dt, mac.h, wrapX, scaleC)
+      Mac.divergence(fluxU, fluxV, divergence)
     j = 0
     while j < ny do
       var i = 0
@@ -534,13 +679,62 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
   private def advectVelocity(dt: Double): Unit =
     val from = cur
     val to = 1 - cur
-    Advect.facesU(flows(from), us(from), us(to), dt)
-    Advect.facesV(flows(from), vs(from), vs(to), dt)
+    if isSphere then
+      SphereAdvect.facesU(flows(from), geo, us(from), us(to), dt)
+      SphereAdvect.facesV(flows(from), geo, vs(from), vs(to), dt)
+    else
+      Advect.facesU(flows(from), us(from), us(to), dt)
+      Advect.facesV(flows(from), vs(from), vs(to), dt)
     cur = to
     closeFaces()
 
   /** The velocity equations: the slope of the surface and the rotation, from the new height. */
   private def momentum(p: ShallowParams, dt: Double): Unit =
+    if isSphere then momentumSphere(p, dt) else momentumPlane(p, dt)
+
+  /**
+   * The velocity equations on the sphere: the slope of the surface along a row of cells as wide as
+   * that row, `f = 2 Ω sin φ`, and, for the full equations, the metric term `u tan φ / R` that
+   * adds to it because the directions east and north turn as the water moves.
+   */
+  private def momentumSphere(p: ShallowParams, dt: Double): Unit =
+    val u = this.u
+    val v = this.v
+    val g = p.gravity
+    val r = p.friction
+    val metric = nonlinear
+    val invDy = 1.0 / geo.dy
+    Staggered.vToU(v, vAtU, wrapX)
+    var j = 0
+    while j < ny do
+      val f = fRowC(j)
+      val inv = 1.0 / geo.dxC(j)
+      val tan = geo.tanC(j)
+      var i = 0
+      while i < nx do
+        if openU(i, j) != 0.0 then
+          val west = if i > 0 then eta(i - 1, j) else eta(nx - 1, j)
+          val fe = if metric then f + u(i, j) * tan else f
+          u(i, j) += dt * (-g * (eta(i, j) - west) * inv - fe * vAtU(i, j) - r * u(i, j))
+        i += 1
+      u(nx, j) = u(0, j)
+      j += 1
+    Staggered.uToV(u, uAtV)
+    j = 1
+    while j < ny do
+      val f = fRowF(j)
+      val tan = geo.tanF(j)
+      var i = 0
+      while i < nx do
+        if openV(i, j) != 0.0 then
+          val ua = uAtV(i, j)
+          val fe = if metric then f + ua * tan else f
+          v(i, j) += dt * (-g * (eta(i, j) - eta(i, j - 1)) * invDy + fe * ua - r * v(i, j))
+        i += 1
+      j += 1
+    if flooding then stopDryFaces()
+
+  private def momentumPlane(p: ShallowParams, dt: Double): Unit =
     val u = this.u
     val v = this.v
     val g = p.gravity
@@ -576,8 +770,96 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     if flooding then floodContinuity(dt) else continuity(dt)
     if nonlinear then advectVelocity(dt)
     momentum(p, dt)
+    if isSphere && p.polar > 0.0 then polarFilter()
     absorb()
+    clock += dt
+    if isSphere && p.arrivalLevel > 0.0 then trackArrival(p.arrivalLevel)
     if flooding then trackFlood()
+
+  /** Notes the time at which each cell first has the surface `level` metres from rest. */
+  private def trackArrival(level: Double): Unit =
+    var k = 0
+    var j = 0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        if arrivalMap(k) < 0.0 && math.abs(eta(i, j)) >= level then arrivalMap(k) = clock
+        k += 1
+        i += 1
+      j += 1
+
+  /** The time the wave reached the watched point, in s; -1 if it has not (or off the sphere). */
+  def arrivalAtWatch: Double = if watchCell >= 0 then arrivalMap(watchCell) else -1.0
+
+  /** Writes the arrival time of every cell (-1 where none yet), row by row, from `offset`. */
+  def arrivalInto(out: Array[Double], offset: Int): Unit =
+    System.arraycopy(arrivalMap, 0, out, offset, nx * ny)
+
+  /**
+   * Writes 1 in the cells that a meridian or a parallel of the graticule (every
+   * [[Shallow.GraticuleStep]] degrees) crosses, 0 elsewhere (and everywhere on the plane).
+   */
+  def graticuleInto(out: Array[Double], offset: Int): Unit =
+    val step = Shallow.GraticuleStep
+    val eps = 1e-9 // a line on the edge of a cell, up to rounding, belongs to it
+    var k = offset
+    var j = 0
+    while j < ny do
+      var latLine = false
+      if isSphere then
+        val north = math.toDegrees(geo.latF(j)) / step
+        val south = math.toDegrees(geo.latF(j + 1)) / step
+        latLine = math.floor(north + eps) > math.floor(south + eps)
+      var i = 0
+      while i < nx do
+        var lonLine = false
+        if isSphere then
+          val w = -180.0 + i * 360.0 / nx
+          val e = -180.0 + (i + 1) * 360.0 / nx
+          lonLine = math.floor(e / step + eps) > math.floor(w / step + eps)
+        out(k) = if latLine || lonLine then 1.0 else 0.0
+        k += 1
+        i += 1
+      j += 1
+
+  /**
+   * Smooths η, u and v along the rows poleward of the polar latitude, with the 1-2-1 filter
+   * repeated as often as the row is narrower than the cells at that latitude (see
+   * [[Shallow.polarPasses]]). The filter conserves the volume of every row, and the faces that
+   * are shut stay shut.
+   */
+  private def polarFilter(): Unit =
+    var j = 0
+    while j < ny do
+      val n = passesC(j)
+      if n > 0 then
+        smoothRow(eta, j, nx, n, null)
+        smoothRow(u, j, nx, n, openU)
+      j += 1
+    j = 1
+    while j < ny do
+      val n = passesF(j)
+      if n > 0 then smoothRow(v, j, nx, n, openV)
+      j += 1
+
+  /** `n` passes of the periodic 1-2-1 filter over the first `count` samples of row `j`. */
+  private def smoothRow(f: Field2D, j: Int, count: Int, n: Int, open: Field2D): Unit =
+    val b = rowBuffer
+    var pass = 0
+    while pass < n do
+      var i = 0
+      while i < count do
+        b(i) = f(i, j)
+        i += 1
+      i = 0
+      while i < count do
+        val w = if i > 0 then b(i - 1) else b(count - 1)
+        val e = if i < count - 1 then b(i + 1) else b(0)
+        val s = 0.25 * w + 0.5 * b(i) + 0.25 * e
+        f(i, j) = if open == null || open(i, j) != 0.0 then s else 0.0
+        i += 1
+      pass += 1
+    if f.nx > count then f(count, j) = f(0, j)
 
   /** Keeps the highest run-up and the deepest water over the shore that the run has seen. */
   private def trackFlood(): Unit =
@@ -610,14 +892,17 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     if !flooding then 0.0
     else
       var n = 0
+      var area = 0.0
       var j = 0
       while j < ny do
         var i = 0
         while i < nx do
-          if bed(i, j) > 0.0 && isWet(i, j) then n += 1
+          if bed(i, j) > 0.0 && isWet(i, j) then
+            n += 1
+            if isSphere then area += geo.area(j)
           i += 1
         j += 1
-      n * mac.h * mac.h
+      if isSphere then area else n * mac.h * mac.h
 
   /** The highest surface over the shore now, in m above the sea at rest; 0 if the shore is dry. */
   def runup: Double =
@@ -672,7 +957,9 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
     while j < ny do
       var i = 0
       while i < nx do
-        val z = raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
+        val z =
+          if isSphere then raster.sampleAt(-180.0 + (i + 0.5) * 360.0 / nx, geo.latDegC(j))
+          else raster.sample((i + 0.5) / nx, (j + 0.5) / ny)
         shape(i, j) = -z / p.depth
         i += 1
       j += 1
@@ -752,20 +1039,23 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
    * `y` and `v` run south, which turns the sign of the plain curl.
    */
   def vorticityInto(out: Array[Double], offset: Int): Unit =
-    Mac.vorticity(u, v, scratchC, wrapX, false)
+    if isSphere then SphereOps.vorticity(u, v, geo, scratchC)
+    else Mac.vorticity(u, v, scratchC, wrapX, false)
+    val sign = if isSphere then 1.0 else -1.0
     var k = offset
     var j = 0
     while j < ny do
       var i = 0
       while i < nx do
-        out(k) = -scratchC(i, j)
+        out(k) = sign * scratchC(i, j)
         k += 1
         i += 1
       j += 1
 
   /** The volume of water above rest, `∫ η`, in m³. */
   def volume: Double =
-    if flooding then
+    if isSphere then sphereVolume
+    else if flooding then
       var sum = 0.0
       var j = 0
       while j < ny do
@@ -777,12 +1067,55 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       sum * mac.h * mac.h
     else eta.sum * mac.h * mac.h
 
+  /** The volume on the sphere: `Σ η · area`, over the water above the level of rest. */
+  private def sphereVolume: Double =
+    var sum = 0.0
+    var j = 0
+    while j < ny do
+      var row = 0.0
+      var i = 0
+      while i < nx do
+        row += (if flooding then eta(i, j) - math.max(0.0, bed(i, j)) else eta(i, j))
+        i += 1
+      sum += row * geo.area(j)
+      j += 1
+    sum
+
   /**
    * The energy per unit of density, `½ ∫ (g η² + h |u|²)`, in m⁵/s²: the potential energy of the
    * raised or lowered surface and the kinetic energy of the flow, with the depth `h` of the
    * water at the faces.
    */
   def energy: Double =
+    if isSphere then sphereEnergy else planeEnergy
+
+  /** The energy on the sphere, with the area of the cells and of the cells around the faces. */
+  private def sphereEnergy: Double =
+    val u = this.u
+    val v = this.v
+    var potential = 0.0
+    var kinetic = 0.0
+    var j = 0
+    while j < ny do
+      val area = geo.area(j)
+      val faceV = geo.lenF(j) * geo.dy
+      var i = 0
+      while i < nx do
+        val e = eta(i, j)
+        if flooding then
+          val rest = math.max(0.0, bed(i, j))
+          potential += (e * e - rest * rest) * area
+        else potential += e * e * area
+        if openU(i, j) != 0.0 then
+          val west = if i > 0 then thickness(i - 1, j) else thickness(nx - 1, j)
+          kinetic += 0.5 * (west + thickness(i, j)) * u(i, j) * u(i, j) * area
+        if j > 0 && openV(i, j) != 0.0 then
+          kinetic += 0.5 * (thickness(i, j - 1) + thickness(i, j)) * v(i, j) * v(i, j) * faceV
+        i += 1
+      j += 1
+    0.5 * (gravityNow * potential + kinetic)
+
+  private def planeEnergy: Double =
     val u = this.u
     val v = this.v
     var potential = 0.0
@@ -935,6 +1268,92 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
       j += 1
 
   /**
+   * Williamson's test 2 on the sphere, a steady zonal flow `u = u0 cos φ` (`u0` is `amp`, in m/s)
+   * with the height that balances it, `η = -(R Ω u0 + u0² / 2) sin² φ / g`. With the depth
+   * `h0 ≈ 2998.6 m` it is a steady solution of the equations, so what the run shows is the
+   * error of the scheme.
+   */
+  def zonalFlow(p: ShallowParams): Unit =
+    val g = geo
+    val u0 = p.amp
+    var j = 0
+    while j < ny do
+      val e = -(p.radius * p.rotation * u0 + 0.5 * u0 * u0) * g.sinC(j) * g.sinC(j) / p.gravity
+      var i = 0
+      while i < nx do
+        eta(i, j) = e
+        i += 1
+      i = 0
+      while i <= nx do
+        u(i, j) = u0 * g.cosC(j)
+        i += 1
+      j += 1
+
+  /**
+   * Williamson's test 6 on the sphere, the Rossby–Haurwitz wave of wave number 4 with the angular
+   * speed `ω = K =` `amp` · 10⁻⁶ rad/s (7.848 is the value of the test). The height is that of the
+   * test less its mean over the globe, so that the volume above the depth is zero.
+   */
+  def rossbyHaurwitz(p: ShallowParams): Unit =
+    val g = geo
+    val m = 4
+    val a = p.radius
+    val om = p.amp * 1e-6
+    val k = om
+    val bigOm = p.rotation
+    def c(phi: Double) = math.cos(phi)
+    def s(phi: Double) = math.sin(phi)
+    def height(phi: Double, lam: Double): Double =
+      val cp = c(phi)
+      val cm = math.pow(cp, m)
+      val cm2 = math.pow(cp, 2 * m)
+      val aa = 0.5 * om * (2.0 * bigOm + om) * cp * cp +
+        0.25 * k * k * cm2 * ((m + 1) * cp * cp + (2.0 * m * m - m - 2) - 2.0 * m * m / (cp * cp))
+      val bb = 2.0 * (bigOm + om) * k / ((m + 1.0) * (m + 2.0)) * cm *
+        ((m * m + 2.0 * m + 2.0) - (m + 1.0) * (m + 1.0) * cp * cp)
+      val cc = 0.25 * k * k * cm2 * ((m + 1) * cp * cp - (m + 2))
+      a * a * (aa + bb * math.cos(m * lam) + cc * math.cos(2 * m * lam)) / p.gravity
+    var j = 0
+    var sum = 0.0
+    var area = 0.0
+    while j < ny do
+      var i = 0
+      while i < nx do
+        val e = height(g.latC(j), -math.Pi + (i + 0.5) * g.dlam)
+        eta(i, j) = e
+        sum += e * g.area(j)
+        area += g.area(j)
+        i += 1
+      j += 1
+    val mean = sum / area
+    j = 0
+    while j < ny do
+      val cp = c(g.latC(j))
+      val sp = s(g.latC(j))
+      var i = 0
+      while i < nx do
+        eta(i, j) -= mean
+        i += 1
+      i = 0
+      while i <= nx do
+        val lam = -math.Pi + i * g.dlam
+        u(i, j) =
+          a * om * cp + a * k * math.pow(cp, m - 1) * (m * sp * sp - cp * cp) * math.cos(m * lam)
+        i += 1
+      j += 1
+    j = 1
+    while j < ny do
+      val cp = c(g.latF(j))
+      val sp = s(g.latF(j))
+      var i = 0
+      while i < nx do
+        val lam = -math.Pi + (i + 0.5) * g.dlam
+        // v points south here; Williamson's v points north
+        v(i, j) = a * k * m * math.pow(cp, m - 1) * sp * math.sin(m * lam)
+        i += 1
+      j += 1
+
+  /**
    * A Rossby wave, one wavelength along `x` and half a wave across `y`, of height `amp`:
    * `η = amp sin(k x) sin(l y)` with the flow in geostrophic balance with it, `f u = g ∂η/∂y`
    * and `f v = -g ∂η/∂x` (`y` runs down the picture). A wave that starts balanced mostly stays a Rossby wave and drifts
@@ -974,10 +1393,10 @@ final class ShallowState(val mac: MacGrid, val wrapX: Boolean):
 object ShallowState:
   /**
    * Live runs export the height, the speed, the vorticity, the depth, the land, the depth of the
-   * water and where it is dry.
+   * water, where it is dry, the graticule of the sphere and when the wave reached each cell.
    */
   given stateExport: StateExport[ShallowState] with
-    def size(state: ShallowState): Int = 7 * state.mac.cells.cells
+    def size(state: ShallowState): Int = 9 * state.mac.cells.cells
 
     def copyInto(state: ShallowState, out: Array[Double]): Unit =
       val n = state.mac.cells.cells
@@ -988,6 +1407,8 @@ object ShallowState:
       state.land.field.copyInteriorInto(out, 4 * n)
       state.waterInto(out, 5 * n)
       state.dryInto(out, 6 * n)
+      state.graticuleInto(out, 7 * n)
+      state.arrivalInto(out, 8 * n)
 
     override def layout(state: ShallowState): IndexedSeq[Slice] =
       val g = state.mac.cells
@@ -999,7 +1420,9 @@ object ShallowState:
         Slice("depth", 3 * n, g.nx, g.ny),
         Slice("land", 4 * n, g.nx, g.ny),
         Slice("water", 5 * n, g.nx, g.ny),
-        Slice("dry", 6 * n, g.nx, g.ny)
+        Slice("dry", 6 * n, g.nx, g.ny),
+        Slice("graticule", 7 * n, g.nx, g.ny),
+        Slice("arrival", 8 * n, g.nx, g.ny)
       )
 
 object Shallow extends Model[ShallowParams]:
@@ -1028,10 +1451,36 @@ object Shallow extends Model[ShallowParams]:
 
   /** The largest `|f|` anywhere on the plane, in 1/s. */
   def maxCoriolis(p: ShallowParams): Double =
-    math.max(
-      math.abs(coriolis(p, 0.0)),
-      math.max(math.abs(coriolis(p, p.ny.toDouble)), math.abs(p.f0))
-    )
+    if p.geometry == 1 then 2.0 * p.rotation
+    else
+      math.max(
+        math.abs(coriolis(p, 0.0)),
+        math.max(math.abs(coriolis(p, p.ny.toDouble)), math.abs(p.f0))
+      )
+
+  /**
+   * The number of passes of the 1-2-1 filter at latitude `lat` (degrees) when it acts poleward of
+   * `polar` degrees: each pass damps the shortest waves of a row, and the number is chosen so
+   * that the row is as stiff as it would be at `polar`, `ceil(((cos polar / cos lat)² - 1) / 2)`.
+   */
+  def polarPasses(polar: Double, lat: Double): Int =
+    if polar <= 0.0 || math.abs(lat) <= polar then 0
+    else
+      val r = math.cos(math.toRadians(polar)) / math.cos(math.toRadians(lat))
+      math.ceil(0.5 * (r * r - 1.0)).toInt
+
+  /** The geometry of the sphere of `p`, or why there is none. */
+  def sphereOf(p: ShallowParams): Either[String, SphereGrid] =
+    scala.util.Try(new SphereGrid(p.nx, p.ny, p.radius, p.latMax)).toEither.left.map(_.getMessage)
+
+  /**
+   * `c dt` over the smallest cell, in the combined form `c dt √(1/dx² + 1/dy²)`, divided by
+   * `√2`, so that it can be held to the same limit as `c dt / dx` on the plane.
+   */
+  def sphereCourant(p: ShallowParams, g: SphereGrid, dt: Double): Double =
+    val dxPolar = g.radius * math.cos(math.toRadians(p.polar)) * g.dlam
+    val dxMin = if p.polar > 0.0 then math.max(g.dxMin, dxPolar) else g.dxMin
+    waveSpeed(p) * dt * math.sqrt(1.0 / (dxMin * dxMin) + 1.0 / (g.dy * g.dy)) / math.sqrt(2.0)
 
   /** The largest `f dt` or `r dt` the step allows. */
   val MaxRateNumber: Double = 0.5
@@ -1061,6 +1510,26 @@ object Shallow extends Model[ShallowParams]:
   def waveWidth(p: ShallowParams): Double =
     math.max(math.sqrt(4.0 * p.depth * p.depth * p.depth / (3.0 * p.amp)), 5.0 * p.dx)
 
+  /**
+   * The rise of the sea floor, in m, that a quake of the magnitude `mw` is given in the Lab:
+   * `10^(mw/2 - 3.5)`, which is 1 m for a magnitude 7, 10 m for a 9 and 18 m for a 9.5, about
+   * half the mean slip of such quakes. The size of the rupture is the radius of the stroke.
+   */
+  def quakeUplift(mw: Double): Double = math.pow(10.0, 0.5 * mw - 3.5)
+
+  /**
+   * The longitude and latitude of the centre of the cell `(x, y)` of a globe of `nx` by `ny`
+   * cells between `latMax` south and north, for the read-out: `12.5°E 38.0°N`.
+   */
+  def lonLatText(nx: Int, ny: Int, latMax: Double, x: Int, y: Int): String =
+    val lon = -180.0 + (x + 0.5) * 360.0 / math.max(1, nx)
+    val lat = latMax - (y + 0.5) * 2.0 * latMax / math.max(1, ny)
+    f"${math.abs(lon)}%.1f°${if lon < 0.0 then "W" else "E"} " +
+      f"${math.abs(lat)}%.1f°${if lat < 0.0 then "S" else "N"}"
+
+  /** The spacing of the meridians and parallels of the graticule, in degrees. */
+  val GraticuleStep: Double = 30.0
+
   /** Width of the smoothed front of [[ShallowState.front]], in cells. */
   val FrontWidth: Double = 3.0
 
@@ -1084,8 +1553,19 @@ object Shallow extends Model[ShallowParams]:
   override def check(p: ShallowParams, stepping: Stepping): Either[String, Unit] =
     stepping match
       case Stepping.Fixed(dt) =>
-        val c = courant(p, dt)
-        if p.seabed >= 3 && p.flooding == 0 then
+        val sphere = if p.geometry == 1 then sphereOf(p) else Left("")
+        val c =
+          sphere.fold(_ => courant(p, dt), g => sphereCourant(p, g, dt))
+        if p.geometry == 1 && sphere.isLeft then Left(sphere.left.getOrElse(""))
+        else if p.geometry == 1 && p.edges == OpenSea then
+          Left("the sphere has no open sea: its edges are walls (edges = 0 or 1)")
+        else if p.geometry == 1 && p.seabed > 2 then
+          Left("the sea floors 3 and 4 are beaches for the plane: on the sphere use 0, 1 or 2")
+        else if p.geometry == 1 && p.start >= 2 && p.start <= 4 then
+          Left("the starts 2, 3 and 4 are for the plane: on the sphere use 0, 1, 5 or 6")
+        else if p.geometry == 0 && p.start >= 5 then
+          Left("the starts 5 and 6 are for the sphere (geometry = 1)")
+        else if p.seabed >= 3 && p.flooding == 0 then
           Left("the sea floors 3 and 4 rise out of the water: they need flooding = 1")
         else if p.flooding != 0 && p.nonlinear == 0 then
           Left(
@@ -1094,7 +1574,10 @@ object Shallow extends Model[ShallowParams]:
         else if c > MaxCourant then
           Left(
             f"the waves cross $c%.2f cells per step; the step needs at most $MaxCourant%.1f " +
-              f"(lower the depth or gravity, make the cells larger, or use dt <= ${MaxCourant * p.dx / waveSpeed(p)}%.0f s)"
+              (if p.geometry == 1 then
+                 f"(lower the depth, make the cells larger or the band narrower, or use dt <= ${MaxCourant * dt / c}%.0f s)"
+               else
+                 f"(lower the depth or gravity, make the cells larger, or use dt <= ${MaxCourant * p.dx / waveSpeed(p)}%.0f s)")
           )
         else if maxCoriolis(p) * dt > MaxRateNumber then
           Left(
@@ -1112,7 +1595,11 @@ object Shallow extends Model[ShallowParams]:
     case _: Stepping.Adaptive => false
 
   def init(p: ShallowParams, rng: SplittableRng): ShallowState =
-    val state = new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
+    val state =
+      if p.geometry == 1 then
+        val g = sphereOf(p).fold(msg => throw new IllegalArgumentException(msg), identity)
+        new ShallowState(new MacGrid(p.nx, p.ny, g.dy), wrapX = true, Some(g))
+      else new ShallowState(new MacGrid(p.nx, p.ny, p.dx), wrapX = p.edges == Channel)
     state.configure(p)
     state.seabed(p.seabed, p.slope)
     if p.edges == OpenSea then state.sponge(p.sponge)
@@ -1121,6 +1608,8 @@ object Shallow extends Model[ShallowParams]:
       case 2 => state.rossby(p)
       case 3 => state.solitary(p)
       case 4 => state.nWave(p)
+      case 5 => state.zonalFlow(p)
+      case 6 => state.rossbyHaurwitz(p)
       case _ => ()
     state.settle()
     state
@@ -1169,6 +1658,8 @@ object Shallow extends Model[ShallowParams]:
           Right(())
         case Intervention.Load(_, _, digest) =>
           if p.flooding == 0 then Left("a sea floor from a file needs flooding = 1")
+          else if p.geometry == 1 && Rasters.get(digest).exists(_.extent.isEmpty) then
+            Left("a sea floor for the sphere needs the coordinates 'lat' and 'lon' in the file")
           else
             Rasters.get(digest).foreach(state.loadSeafloor(_, p))
             Right(())
@@ -1212,6 +1703,10 @@ object Shallow extends Model[ShallowParams]:
   val maxInundation: Probe[ShallowState] =
     Probe[ShallowState]("max_inundation", "m")((s, _) => s.maxInundation)
 
+  /** When the wave reached the watched point, in s (-1 before; sphere only). */
+  val arrival: Probe[ShallowState] =
+    Probe[ShallowState]("arrival", "s")((s, _) => s.arrivalAtWatch)
+
   val probes: Vector[Probe[ShallowState]] =
     Vector(
       mass,
@@ -1223,5 +1718,6 @@ object Shallow extends Model[ShallowParams]:
       floodedArea,
       runup,
       maxRunup,
-      maxInundation
+      maxInundation,
+      arrival
     )

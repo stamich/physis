@@ -40,7 +40,12 @@ bit for bit. Milestone 0.10.0 adds **flooding** to the shallow-water model: a se
 above the sea, a solitary wave or N-wave that runs up a beach and floods it, a bay, run-up and
 flood probes, a depth view with the shoreline, a sea floor read from a NetCDF file
 (`--bathymetry`, with the file's digest in the manifest) and two Lab presets, checked against
-Thacker's bowl, Synolakis' run-up law and a numpy reference.
+Thacker's bowl, Synolakis' run-up law and a numpy reference. Milestone 0.11.0 puts the same model on a
+**sphere**: a longitude–latitude band with the true Coriolis parameter and metric terms, a polar
+filter, Williamson's tests 2 and 6, the speed of a wave round the globe, three presets and a Quake
+tool in the Lab, a sea floor read by latitude and longitude, datasets with `lon` and `lat` axes, and
+the arrival time of a wave at a point, checked against a second implementation in numpy
+([docs/sphere.md](docs/sphere.md)).
 
 ## Modules
 
@@ -59,7 +64,7 @@ Thacker's bowl, Synolakis' run-up law and a numpy reference.
 | `models/physarum` | Physarum agents on a trail, with presets for networks, meshes and spots |
 | `models/fluid` | incompressible flow on a staggered grid: cavity, cylinder wake, smoke, vortex pair |
 | `models/convection` | Rayleigh–Bénard convection: rolls and plumes in a layer heated from below |
-| `models/shallow` | shallow water on a rotating plane: tsunami, Kelvin and Rossby waves, geostrophic balance |
+| `models/shallow` | shallow water on a rotating plane or sphere: tsunami, Kelvin and Rossby waves, geostrophic balance |
 | `modules/view` | toolkit-free view descriptions: trajectories, plots, 2D scenes, camera, trails, colormaps |
 | `modules/fx` | JavaFX renderers, render loop, frame statistics, generated parameter panel, run controls |
 | `apps/lab` | Physis Lab desktop app |
@@ -154,7 +159,8 @@ Every model ships with tests that check the numerics, not only the code:
 See [docs/models](docs/models) for the equations, integrators and checks of each model,
 [docs/fields.md](docs/fields.md) for grids and agents, and
 [docs/interventions.md](docs/interventions.md) for painting into a running model, and
-[docs/datasets.md](docs/datasets.md) for NetCDF export.
+[docs/datasets.md](docs/datasets.md) for NetCDF export, and
+[docs/sphere.md](docs/sphere.md) for the shallow-water model on a sphere.
 
 ## Design rules
 

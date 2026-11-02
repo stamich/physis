@@ -17,15 +17,17 @@ class ShallowProbesSuite extends munit.FunSuite:
         "flooded_area",
         "runup",
         "max_runup",
-        "max_inundation"
+        "max_inundation",
+        "arrival"
       )
     )
   }
 
-  test("at rest every probe is zero") {
+  test("at rest every probe is zero, and the arrival is -1 on the plane") {
     val r = run(params(f0 = 1e-4))
     r.runSteps(5)
-    for probe <- Shallow.probes do assertEquals(probe.measure(r.state, 0.0), 0.0, probe.name)
+    for probe <- Shallow.probes.init do assertEquals(probe.measure(r.state, 0.0), 0.0, probe.name)
+    assertEquals(Shallow.arrival.measure(r.state, 0.0), -1.0)
   }
 
   test("the mass probe is the volume above rest and stays constant") {

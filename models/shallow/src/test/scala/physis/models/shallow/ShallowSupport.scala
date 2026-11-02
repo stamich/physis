@@ -28,7 +28,15 @@ object ShallowSupport:
       ny: Int = 30,
       flooding: Int = 0,
       dryDepth: Double = 0.01,
-      slope: Double = 0.05
+      slope: Double = 0.05,
+      geometry: Int = 0,
+      radius: Double = 6.371e6,
+      rotation: Double = 7.292e-5,
+      latMax: Double = 80.0,
+      polar: Double = 0.0,
+      watchLon: Double = 0.0,
+      watchLat: Double = 0.0,
+      arrivalLevel: Double = 0.01
   ): ShallowParams = ShallowParams(
     gravity = gravity,
     depth = depth,
@@ -46,7 +54,15 @@ object ShallowSupport:
     ny = ny,
     flooding = flooding,
     dryDepth = dryDepth,
-    slope = slope
+    slope = slope,
+    geometry = geometry,
+    radius = radius,
+    rotation = rotation,
+    latMax = latMax,
+    polar = polar,
+    watchLon = watchLon,
+    watchLat = watchLat,
+    arrivalLevel = arrivalLevel
   )
 
   /**

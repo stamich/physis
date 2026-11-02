@@ -455,7 +455,13 @@ final class LabWindow(
       session.speedRange.text
     )
     for case h: HeatmapRenderer <- renderers do
-      h.onCell = c => cell.setText(c.fold("")(_.text(h.sliceName)))
+      h.onCell = c =>
+        cell.setText(
+          c.fold("") { found =>
+            val where = session.locate(currentParams(), found.x, found.y)
+            found.text(h.sliceName) + where.fold("")(w => s"  ·  $w")
+          }
+        )
     val paintables = renderers.collect { case p: Paintable => p }
     var box: ToolBox = null
     if session.tools.nonEmpty && paintables.nonEmpty then

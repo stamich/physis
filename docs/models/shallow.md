@@ -2,7 +2,7 @@
 
 Module: `models/shallow` · id `shallow` · version 0.8.0
 
-A thin layer of water on a rotating plane, in two dimensions: the sea in which a tsunami runs, a
+A thin layer of water on a rotating plane, or, with `geometry = 1`, on a band of a rotating sphere ([sphere.md](../sphere.md)), in two dimensions: the sea in which a tsunami runs, a
 tide sloshes, a Kelvin wave follows a coast and a Rossby wave drifts west. The water is described
 by the height of its surface `η` above rest and by the horizontal velocity `(u, v)`, both
 independent of depth. With `h` the depth of the water at rest, `g` gravity and `f` the Coriolis
@@ -51,7 +51,7 @@ velocity is also advected, with the semi-Lagrangian step of the fluid on the dou
 | Name | Default | Range | Meaning |
 | --- | --- | --- | --- |
 | `gravity` | 9.81 | 0.1 – 30 | m/s² |
-| `depth` | 4000 | 1 – 7000 | depth at rest in m, live; the seabed shape scales it |
+| `depth` | 4000 | 1 – 12 000 | depth at rest in m, live; the seabed shape scales it |
 | `dx` | 20 000 | 500 – 100 000 | cell size in m (restart only) |
 | `f0` | 10⁻⁴ | −5·10⁻⁴ – 5·10⁻⁴ | Coriolis parameter at the middle row, 1/s |
 | `beta` | 0 | 0 – 10⁻⁹ | change of `f` with `y`, 1/(m s) |
@@ -60,13 +60,14 @@ velocity is also advected, with the semi-Lagrangian step of the fluid on the dou
 | `edges` | 1 | 0 – 2 | border (restart only): 0 channel (periodic left and right, walls above and below), 1 closed basin, 2 open sea |
 | `sponge` | 10 | 0 – 64 | width in cells of the absorbing border of the open sea (restart only) |
 | `seabed` | 0 | 0 – 4 | shape of the sea floor (restart only): 0 flat, 1 shelf, 2 seamount, 3 plane beach, 4 beach with a bay (3 and 4 need `flooding`) |
-| `start` | 0 | 0 – 4 | initial state (restart only): 0 rest, 1 a front, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave |
-| `amp` | 0.2 | 0 – 20 | amplitude in m of the front or the wave |
+| `start` | 0 | 0 – 6 | initial state (restart only): 0 rest, 1 a front, 2 a Rossby wave, 3 a solitary wave, 4 an N-wave, 5 and 6 Williamson's tests 2 and 6 (sphere only) |
+| `amp` | 0.2 | 0 – 100 | amplitude in m of the front or the wave (start 5: speed in m/s; start 6: angular speed in 10⁻⁶ rad/s) |
 | `nx` | 128 | 16 – 512 | grid columns (restart only) |
 | `ny` | 96 | 16 – 512 | grid rows (restart only) |
 | `flooding` | 0 | 0 – 1 | 1 floods and dries the shore (restart only; needs `nonlinear`) |
 | `dryDepth` | 0.01 | 10⁻⁶ – 10 | water in m below which a face is dry |
 | `slope` | 0.05 | 10⁻³ – 1 | rise of a plane beach (restart only) |
+| `geometry` | 0 | 0 – 1 | 0 the plane, 1 a band of a sphere (restart only); with `radius`, `rotation`, `latMax`, `polar`, `watchLon`, `watchLat`, `arrivalLevel`: see [sphere.md](../sphere.md) |
 
 The **open sea** absorbs: within `sponge` cells of the border `η`, `u` and `v` are pulled to zero
 by up to 10 % a step at the border, with a quadratic ramp, so that waves leave without coming back. About
@@ -85,6 +86,9 @@ it. The **shelf** rises from the full depth at 55 % of the width to 5 % of it at
 | Harbour | open, 40 m, nonlinear, 120 × 80 at 2 km | a wave front meets a breakwater with a gap and an island: diffraction |
 | Beach run-up | open, 100 m, flooding, 120 × 40 at 2.5 km | a 6 m solitary wave runs up a plane beach and back |
 | Harbour flood | open, 100 m, flooding, 120 × 60 at 2.5 km | an 8 m solitary wave comes ashore at a bay |
+| Pacific tsunami | globe, 4 km, nonlinear, 240 × 106 to 80° | a 3 m rise off Japan on a globe with no continents; the `arrival` probe watches a point near Hawaii |
+| Equatorial Kelvin wave | globe, 4 km, linear, 240 × 106 | a bump on the equator: a trapped wave goes east round the globe |
+| Rossby–Haurwitz wave | globe, 8 km, nonlinear, 180 × 80 | Williamson's test 6 |
 
 A preset sets parameters and, for Tsunami, Kelvin wave and Harbour, paints at step 0 as ordinary
 interventions, so it is part of the manifest. Choosing one in the Lab starts a new run.
@@ -93,10 +97,10 @@ interventions, so it is part of the manifest. Choosing one in the Lab starts a n
 
 Probes, in this order: `mass` (volume above rest, m³), `energy` (m⁵/s², kinetic plus potential
 per unit of area, summed), `max_height`, `min_height`, `max_speed`, and with flooding
-`wet_fraction`, `flooded_area`, `runup`, `max_runup`, `max_inundation` ([flooding.md](../flooding.md)).
+`wet_fraction`, `flooded_area`, `runup`, `max_runup`, `max_inundation` ([flooding.md](../flooding.md)), and `arrival` (the time in s at which the surface at `watchLon`, `watchLat` first moved by `arrivalLevel`, −1 before; sphere only). On the sphere `mass` and `energy` are weighted by the area of the cells.
 
 Slices of the state: `height`, `speed`, `vorticity` (positive counter-clockwise), `depth` (at rest,
-with the seabed), `land`, and `water` (depth of the water now) and `dry`. The Lab shows the height, a diverging map centred at zero, above
+with the seabed), `land`, and `water` (depth of the water now) and `dry`, then `graticule` and `arrival` (the travel time of each cell, −1 before; both only mean something on the sphere). The Lab shows the height, a diverging map centred at zero, above
 plots of the energy and the highest surface over the last 200 000 s; `ShallowViews` also has the
 speed, the vorticity and the depth.
 
@@ -109,7 +113,7 @@ speed, the vorticity and the depth.
 
 Land closes the faces around it; the cells it covers lose their water and their flow (the `mass`
 probe changes), and cells that are erased come back at rest at height 0. In the Lab the tools are **Uplift**
-(the right button lowers), **Drop** (the other way round), **Land** (the right button erases) and
+(the right button lowers), **Drop** (the other way round), **Quake** (a magnitude: a rise of `10^(Mw/2 − 3.5)` m, the radius is the size of the rupture), **Land** (the right button erases) and
 **Erase land** and **Water level** (a flat layer of metres in a disc, the right button takes it away).
 
 ## Checks
@@ -139,7 +143,7 @@ with the numpy output.
 
 ## Datasets
 
-- A run can be written as a NetCDF file with `height`, `speed`, `vorticity`, `depth`, `land`, `water` and `dry` (`physis-cli export`, File → Export data…), in metres and seconds with `y` running south; see [datasets.md](../datasets.md).
+- A run can be written as a NetCDF file with `height`, `speed`, `vorticity`, `depth`, `land`, `water`, `dry`, `graticule` and `arrival` (`physis-cli export`, File → Export data…), in metres and seconds with `y` running south; a globe has `lon` and `lat` in degrees instead of `x` and `y`; see [datasets.md](../datasets.md).
 
 ## Limits
 
@@ -150,4 +154,4 @@ with the numpy output.
   (0.77 of Synolakis' law for H/d = 0.0185), see [flooding.md](../flooding.md).
 - The step is fixed at 50 s, so a cell cannot be smaller than `c dt / 0.7` (14.2 km for 4 km of
   water). Finer cells need shallower water or a smaller `g`; the model refuses the run otherwise.
-- Spherical geometry, tides and real coastlines belong to later milestones.
+- The sphere is a longitude–latitude band to at most 89°, described in [sphere.md](../sphere.md) with its limits; tides and real coastlines belong to later milestones.

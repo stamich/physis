@@ -30,6 +30,10 @@ sea.nusselt                          # a probe is a series over time
 | the fields | `time`, `y`, `x` | one variable per field of the model, 64-bit floats (`--float`: 32-bit) |
 | the probes | `time` | one variable per probe of the model, 64-bit floats |
 
+On a globe (shallow water with `geometry = 1`) the axes are `lon` and `lat` instead, in degrees east
+and north (`degrees_east`, `degrees_north`, the centres of the cells, `lat` decreasing since row 0
+is the north), and the fields have the dimensions `(time, lat, lon)`; see [sphere.md](sphere.md).
+
 `time` is the unlimited (record) dimension. The number of records is written in the header, which
 is why the file is made in one pass and the size is known before the run. Models without
 fields (Lorenz, the double pendulum and Boids) have only the probes.
@@ -41,7 +45,7 @@ fields (Lorenz, the double pendulum and Boids) have only the probes.
 | Physarum | `trail`, `food` |
 | Fluids | `dye`, `vorticity`, `speed`, `wall` |
 | Convection | `temperature`, `deviation`, `vorticity`, `speed`, `wall` |
-| Shallow water | `height`, `speed`, `vorticity`, `depth`, `land`, `water`, `dry` |
+| Shallow water | `height`, `speed`, `vorticity`, `depth`, `land`, `water`, `dry`, `graticule`, `arrival` |
 
 The variables carry `long_name`, `units` and, where CF has one, `standard_name` (the shallow
 sea's `height`, `speed` and `depth`). The global attributes are `Conventions = "CF-1.8"`, `title`,

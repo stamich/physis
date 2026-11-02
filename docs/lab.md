@@ -115,14 +115,15 @@ shows its radius.
 | Physarum | **Paint food** (right button erases), **Erase food**, **Paint trail** |
 | Fluids | **Smoke** (dye, right button erases), **Push sideways** and **Push up** (value: speed, right button pushes the other way), **Wall** (right button erases), **Erase wall** |
 | Convection | **Heat spot** and **Cool spot** (value: how much warmer or colder than conduction; the right button resets the place), **Wall** (right button erases), **Erase wall** |
-| Shallow water | **Uplift** and **Drop** (value: metres; the right button does the opposite), **Land** (right button erases), **Erase land**, **Water level** (value: metres of a flat layer; the right button takes it away) |
+| Shallow water | **Uplift** and **Drop** (value: metres; the right button does the opposite), **Quake** (value: magnitude, 6 – 9.5; the radius is the size of the rupture), **Land** (right button erases), **Erase land**, **Water level** (value: metres of a flat layer; the right button takes it away) |
 
 The left button applies the tool and dragging paints a line; the right button erases where the
 tool paints. The mouse wheel over the view changes the radius, the slider and the value field do
 the same, B switches the tool off and on again. A drag is cut into dabs at most half a radius
 apart, and the dabs of one frame are sent together. The box shows how many strokes the session
-has recorded. On a periodic grid (Gray–Scott, Boids, Waves with the periodic edge) a stroke
-wraps across the border. Painting works while the run is paused: the strokes are applied at the
+has recorded. On a periodic grid (Gray–Scott, Boids, Waves with the periodic edge, the shallow sea as a channel or a globe) a stroke
+wraps across the border. On a globe the read-out under the pointer adds the longitude and the
+latitude of the cell. Painting works while the run is paused: the strokes are applied at the
 next step.
 
 Every dab is an [intervention](interventions.md), recorded in the manifest, so File → Save

@@ -7,9 +7,45 @@ import java.util.concurrent.ConcurrentHashMap
  * A rectangle of values read from a file, for example the height of the ground in metres
  * (positive up), `ny` rows of `nx` values with row 0 at the north.
  */
-final class Raster(val nx: Int, val ny: Int, val values: Array[Double]):
+final class Raster(
+    val nx: Int,
+    val ny: Int,
+    val values: Array[Double],
+    val extent: Option[Raster.Extent] = None
+):
   require(nx > 0 && ny > 0, s"raster of $nx x $ny values")
   require(values.length == nx * ny, s"raster of $nx x $ny needs ${nx * ny} values")
+
+  /**
+   * The value at the longitude `lon` (degrees east) and the latitude `lat` (degrees north), for a
+   * raster that has an [[Raster.Extent]]; bilinear between the centres of the cells. A raster
+   * that goes once round the globe wraps in longitude; elsewhere, and in latitude, the value
+   * beyond the outermost centres is that of the outermost centre. Allocates nothing.
+   */
+  def sampleAt(lon: Double, lat: Double): Double =
+    val e = extent.getOrElse(throw new IllegalStateException("the raster has no extent"))
+    val span = e.east - e.west
+    val dx = lon - e.west
+    val u = if e.global then (((dx % 360.0) + 360.0) % 360.0) / span else dx / span
+    val v = (e.north - lat) / (e.north - e.south)
+    val x = u * nx - 0.5
+    val y = math.max(0.0, math.min(ny - 1.0, v * ny - 0.5))
+    val xf = math.floor(x)
+    val fx = x - xf
+    var i0 = xf.toInt
+    var i1 = i0 + 1
+    if e.global then
+      i0 = ((i0 % nx) + nx) % nx
+      i1 = ((i1 % nx) + nx) % nx
+    else
+      i0 = math.max(0, math.min(nx - 1, i0))
+      i1 = math.max(0, math.min(nx - 1, i1))
+    val j = math.min(y.toInt, math.max(0, ny - 2))
+    val j1 = math.min(j + 1, ny - 1)
+    val fy = y - j
+    val top = values(j * nx + i0) * (1.0 - fx) + values(j * nx + i1) * fx
+    val bottom = values(j1 * nx + i0) * (1.0 - fx) + values(j1 * nx + i1) * fx
+    top * (1.0 - fy) + bottom * fy
 
   /**
    * The value at `(u, v)`, both in `[0, 1]` across the whole raster (`u` to the east, `v` to the
@@ -28,6 +64,17 @@ final class Raster(val nx: Int, val ny: Int, val values: Array[Double]):
     val top = values(j * nx + i) * (1.0 - fx) + values(j * nx + i1) * fx
     val bottom = values(j1 * nx + i) * (1.0 - fx) + values(j1 * nx + i1) * fx
     top * (1.0 - fy) + bottom * fy
+
+object Raster:
+  /**
+   * Where a raster lies on the globe: the edges of its outermost cells, in degrees (`west` to
+   * `east` eastward, `south` to `north`).
+   */
+  final case class Extent(west: Double, east: Double, south: Double, north: Double):
+    require(east > west && north > south, s"empty extent $west..$east, $south..$north")
+
+    /** Whether the raster goes once round the globe, so that its edges meet. */
+    def global: Boolean = east - west >= 360.0 - 1e-6 * 360.0
 
 /**
  * The rasters that a process has read from files, by the digest of the file. A run records an

@@ -101,6 +101,12 @@ trait LabModel:
   /** Whether strokes wrap across the border, given the session's current parameters. */
   def wraps(params: Map[String, Double]): Boolean = false
 
+  /**
+   * Where on a map the cell `(x, y)` lies, in words for the read-out, when the field is a map (a
+   * globe's longitude and latitude); `None` for a field that is only a picture.
+   */
+  def locate(params: Map[String, Double], x: Int, y: Int): Option[String] = None
+
   /** Starts nothing yet: builds a paused-or-running live session with the given seed. */
   def open(seed: Long, startPaused: Boolean = false): LabSession
 
@@ -186,6 +192,10 @@ final class LabSession(
   /** Whether strokes wrap across the border, given the current parameters. */
   def wraps(params: Map[String, Double]): Boolean = model.wraps(params)
 
+  /** Where the cell `(x, y)` lies on the map, if the field is one. */
+  def locate(params: Map[String, Double], x: Int, y: Int): Option[String] =
+    model.locate(params, x, y)
+
   /**
    * Whether the session can make pictures of its state without a window (Save image, Save
    * animation): it has a state exporter and its view holds a heatmap. The ODE models do not.
@@ -242,7 +252,8 @@ final class ModelEntry[P, S](
     painted: Map[String, (Int, Int) => Vector[Intervention]] = Map.empty,
     seeded: Boolean = true,
     animation: AnimationDefaults = AnimationDefaults(),
-    exportSpec: Option[P => ExportSpec] = None
+    exportSpec: Option[P => ExportSpec] = None,
+    place: (Map[String, Double], Int, Int) => Option[String] = (_, _, _) => None
 ) extends LabModel:
   def id: String = model.id
 
@@ -268,6 +279,9 @@ final class ModelEntry[P, S](
         Command.Restart(values, None, Some(paint(nx, ny)))
 
   override def wraps(params: Map[String, Double]): Boolean = wrap(params)
+
+  override def locate(params: Map[String, Double], x: Int, y: Int): Option[String] =
+    place(params, x, y)
 
   def open(seed: Long, startPaused: Boolean): LabSession =
     val params = model.params.defaults
@@ -583,6 +597,17 @@ object Catalog:
           )
       ),
       LabTool(
+        ToolSpec("Quake", Some("magnitude"), 8.0, (6.0, 9.5), (1.0, 20.0), 3.0),
+        (d, r, v, secondary) =>
+          Intervention.Pulse(
+            "height",
+            d.x,
+            d.y,
+            math.max(1.0, r / 2.5),
+            Shallow.quakeUplift(v) * (if secondary then -1.0 else 1.0)
+          )
+      ),
+      LabTool(
         ToolSpec("Land", None, 0.0, (0.0, 0.0), (1.0, 20.0), 3.0),
         (d, r, _, secondary) =>
           Intervention.Brush(
@@ -602,10 +627,23 @@ object Catalog:
           Intervention.Brush("height", Disc(d.x, d.y, r), Op.Add, if secondary then -v else v)
       )
     ),
-    wrap = p => p.getOrElse("edges", 0.0) == Shallow.Channel.toDouble,
+    wrap = p =>
+      p.getOrElse("edges", 0.0) == Shallow.Channel.toDouble || p.getOrElse("geometry", 0.0) == 1.0,
     painted = ShallowPresets.all.map(p => p.name -> p.interventions).toMap,
     animation = AnimationDefaults(every = 10, fps = 20),
-    exportSpec = Some(ShallowExport.spec)
+    exportSpec = Some(ShallowExport.spec),
+    place = (p, x, y) =>
+      if p.getOrElse("geometry", 0.0) == 1.0 then
+        Some(
+          Shallow.lonLatText(
+            p.getOrElse("nx", 0.0).toInt,
+            p.getOrElse("ny", 0.0).toInt,
+            p.getOrElse("latMax", 80.0),
+            x,
+            y
+          )
+        )
+      else None
   )
 
   /** In menu order; the first one opens at start. */

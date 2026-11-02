@@ -36,3 +36,31 @@ class RasterSuite extends munit.FunSuite:
     assert(Intervention.Load("", "bay.nc", 1L).validate.isDefined)
     assertEquals(iv.validate, None)
   }
+
+  test("on the globe a raster is read by longitude and latitude, wrapping round") {
+    // 4 columns of 90 degrees centred at 0, 90, 180, 270 and 2 rows centred at 45 and -45
+    val r = new Raster(
+      4,
+      2,
+      Array(0.0, 10.0, 20.0, 30.0, 100.0, 110.0, 120.0, 130.0),
+      Some(Raster.Extent(-45.0, 315.0, -90.0, 90.0))
+    )
+    assertEqualsDouble(r.sampleAt(0.0, 45.0), 0.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(90.0, -45.0), 110.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(45.0, 45.0), 5.0, 1e-12)
+    // from the last column to the first, through the dateline
+    assertEqualsDouble(r.sampleAt(315.0, 45.0), 15.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(-45.0, 45.0), 15.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(360.0, 45.0), 0.0, 1e-12)
+    // north of the outermost centre the value stays
+    assertEqualsDouble(r.sampleAt(0.0, 89.0), 0.0, 1e-12)
+  }
+
+  test("a raster of a region holds its edge values beyond the region") {
+    val r = new Raster(2, 1, Array(1.0, 3.0), Some(Raster.Extent(10.0, 20.0, 0.0, 10.0)))
+    assertEqualsDouble(r.sampleAt(12.5, 5.0), 1.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(15.0, 5.0), 2.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(100.0, 5.0), 3.0, 1e-12)
+    assertEqualsDouble(r.sampleAt(-100.0, 5.0), 1.0, 1e-12)
+    intercept[IllegalStateException](new Raster(1, 1, Array(0.0)).sampleAt(0.0, 0.0))
+  }

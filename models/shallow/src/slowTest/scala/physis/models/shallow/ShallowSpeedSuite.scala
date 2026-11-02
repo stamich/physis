@@ -97,3 +97,52 @@ class ShallowSpeedSuite extends munit.FunSuite:
     println(SpeedReport.record("shallow step 128x96", ms, "ms"))
     assert(ms < 40.0, f"$ms%.1f ms a step")
   }
+
+  private def globe(nonlinear: Int, polar: Double) =
+    val p = ShallowParams(
+      gravity = 9.81,
+      depth = 4000.0,
+      dx = 20_000.0,
+      f0 = 0.0,
+      beta = 0.0,
+      friction = 0.0,
+      nonlinear = nonlinear,
+      edges = Shallow.Basin,
+      sponge = 0,
+      seabed = 0,
+      start = 6,
+      amp = 7.848,
+      nx = 360,
+      ny = 160,
+      geometry = 1,
+      latMax = 80.0,
+      polar = polar
+    )
+    Physis.model(Shallow).withParams(p).stepping(Shallow.stepping).seed(1L).build()
+
+  test("the nonlinear step on a global grid of 360 x 160 updates cells fast enough") {
+    val r = globe(nonlinear = 1, polar = 0.0)
+    r.runSteps(100)
+    val windows = Array.fill(5) {
+      val start = System.nanoTime()
+      r.runSteps(50L)
+      360.0 * 160.0 * 50 / ((System.nanoTime() - start) / 1e9)
+    }
+    val rate = windows.max
+    println(SpeedReport.record("shallow sphere cell updates 360x160", rate / 1e6, "million/s"))
+    assert(rate >= 0.1e6, f"${rate / 1e6}%.2f million cell updates per second")
+    assert(r.state.volume.isFinite)
+  }
+
+  test("a model day on the global grid takes under a minute, with the polar filter too") {
+    for polar <- Seq(0.0, 70.0) do
+      val r = globe(nonlinear = 1, polar = polar)
+      r.runSteps(100)
+      val start = System.nanoTime()
+      r.runSteps(86400L / 50 - 100)
+      val seconds = (System.nanoTime() - start) / 1e9
+      val label = "shallow sphere day 360x160" + (if polar > 0.0 then " with polar filter" else "")
+      println(SpeedReport.record(label, seconds, "s"))
+      assert(seconds < 60.0, f"$seconds%.1f s for a model day")
+      assert(r.state.eta.max.isFinite && r.state.eta.min.isFinite)
+  }

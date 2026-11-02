@@ -8,7 +8,8 @@ import physis.core.live.{ExportSpec, FieldMeta}
  */
 object ShallowExport:
   def spec(p: ShallowParams): ExportSpec = ExportSpec(
-    "Shallow water on a rotating plane",
+    if p.geometry == 1 then "Shallow water on a rotating sphere"
+    else "Shallow water on a rotating plane",
     Vector(
       FieldMeta(
         "height",
@@ -33,10 +34,16 @@ object ShallowExport:
         "dry",
         "1 where there is land or the shore is dry, 0 where there is water",
         "1"
-      )
+      ),
+      FieldMeta("graticule", "graticule", "1 on the meridians and parallels of the map", "1"),
+      FieldMeta("arrival", "arrival", "time the wave first reached the cell, -1 before", "s")
     ),
-    dx = p.dx,
+    dx = if p.geometry == 1 then p.radius * 2.0 * math.toRadians(p.latMax) / p.ny else p.dx,
     lengthUnits = "m",
     timeUnits = "s",
-    yDown = true
+    yDown = true,
+    geo =
+      if p.geometry == 1 then
+        Some(ExportSpec.Geo(-180.0, 360.0 / p.nx, p.latMax, 2.0 * p.latMax / p.ny))
+      else None
   )

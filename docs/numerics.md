@@ -47,7 +47,10 @@ the height there), and `vToU` and `uToV` (the mean of the four faces of the othe
 a face, for the Coriolis term). On a wrapping axis the last `u` face is a copy of the first.
 None of them allocates. The model that uses them is described in
 [shallow.md](models/shallow.md): a forward–backward step whose mass equation is in flux form,
-so the volume is conserved to rounding.
+so the volume is conserved to rounding. On the sphere ([sphere.md](sphere.md)) `SphereGrid` has the
+sizes and areas of a longitude–latitude grid, `SphereOps` the divergence (fluxes times the length of
+the faces, over the exact area of the cell), the gradients, the vorticity and the outflow limiter,
+and `SphereAdvect` the semi-Lagrangian step in the stretched index space.
 
 ## Diffusion
 
